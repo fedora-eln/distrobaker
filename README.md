@@ -57,7 +57,7 @@ of the configuration file below.
 # General source and destination configuration, plus default
 # values for components.
 configuration:
-    source: https://https://src.fedoraproject.org/rpms/
+    source: https://src.fedoraproject.org/rpms/
     destination: /tmp/
     trigger: rawhide
     target: rhel-9.0.0-candidate
