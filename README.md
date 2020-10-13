@@ -52,6 +52,12 @@ of the configuration file below.
 configuration:
     source: https://src.fedoraproject.org/rpms/
     destination: /tmp/
+    sourcecache: https://src.fedoraproject.org/repo/pkgs
+    sourcecachecgi: https://src.fedoraproject.org/repo/pkgs/upload.cgi
+    sourcecachepath: "%(name)s/%(filename)s/%(hashtype)s/%(hash)s/%(filename)s"
+    destinationcache: https://src.elsewhere.org/repo/pkgs
+    destinationcachecgi: https://src.elsewhere.org/repo/pkgs/upload.cgi
+    destinationcachepath: "%(name)s/%(filename)s/%(hashtype)s/%(hash)s/%(filename)s"
     trigger: rawhide
     target: rhel-9.0.0-candidate
     profile: brew
@@ -101,6 +107,15 @@ In the `components` section, this key holds the destination repository name
 which is appended to the global prefix, with the optional branch name
 at the end following the pound symbol (`#`).  If the branch is not provided,
 `master` is assumed.  Mandatory.
+
+#### `*cache`, `*cachecgi`, `*cachepath`
+
+The cache options define lookaside cache location and interfaces for the
+source and the destination.
+
+The `cache` option is the base URL of the cache, the `cachecgi` points to
+the CGI upload interface and the `cachepath` is substitution pattern string
+appended to the base path.
 
 #### `trigger`
 
@@ -174,8 +189,9 @@ downstream-only changes with this approach.  The recommended setting is `false`.
 
 ## Scripts
 
-The `scripts` directory contains various scripts extending the code DistroBaker
-functionality.  Currently only one is provided:
+### `distrobaker.py`
+
+The main entry point for the DistroBaker service.
 
 ### `initialsync.py`
 
