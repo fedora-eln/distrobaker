@@ -1,0 +1,17 @@
+[BASIC]
+# Regular expression matching correct function names
+function-rgx=[a-z_][a-z0-9_]{2,50}$
+
+[MESSAGES CONTROL]
+disable=
+  C0103,  # invalid-name
+  C0114,  # missing-module-docstring
+  E0401,  # import-error
+  W1202,  # logging-format-interpolation lazy % formatting in logging functions
+
+[REPORTS]
+msg-template='[{msg_id} {symbol}] {msg} File: {path}, line {line}, in {obj}'
+
+[FORMAT]
+# Maximum number of characters on a single line.
+max-line-length=120
