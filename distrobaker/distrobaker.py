@@ -84,7 +84,7 @@ def load_config():
         status['status'] = 'error - no configuration'
         return
     try:
-        for prop in ('source', 'destination', 'trigger', 'target', 'profile', 'build', 'merge', 'sourcecache', 'sourcecachecgi', 'sourcecachepath', 'destinationcache', 'destinationcachecgi', 'destinationcachepath'):
+        for prop in ('source', 'destination', 'trigger', 'target', 'profile', 'buildprefix', 'build', 'merge', 'sourcecache', 'sourcecachecgi', 'sourcecachepath', 'destinationcache', 'destinationcachecgi', 'destinationcachepath'):
             conf[prop] = yamlconf['configuration'][prop]
         conf['components'] = {}
         for component in yamlconf['components'].keys():
@@ -124,7 +124,6 @@ def merge_component(component):
         try:
             logging.info('Attempting a fast forward merge...')
             repo.remotes.source.pull(srclink['branch'])
-            #repo.remotes.source.pull(srclink['branch'], rebase=True)
             logging.info('Successfully pulled.')
         except git.exc.GitCommandError:
             if not conf['components'][component]['merge']:
@@ -157,8 +156,9 @@ def merge_component(component):
         copy_source_files(component, sourcefiles)
         try:
             logging.info('Pushing changes...')
-            repo.git.push()
+            repo.git.push('--set-upstream', 'origin', dstlink['branch'])
             logging.info('Successfully pushed.')
+            conf['components'][component]['ref'] = str(repo.commit())
         except git.exc.GitCommandError as e:
             logging.warning('Pushing failed!')
             logging.warning(e)
@@ -194,7 +194,6 @@ def copy_source_files(component, sourcefiles):
         if (len(sourcefiles[rec]) == 128 and dcache_sha512.remote_file_exists('rpms/' + component, rec, sourcefiles[rec])) or (len(sourcefiles[rec]) == 32 and dcache_md5.remote_file_exists('rpms/' + component, rec, sourcefiles[rec])):
             logging.info('Source file already uploaded, skpping (' + rec + ')')
             continue
-        # Fetch and upload
         hashtype = 'sha512' if len(sourcefiles[rec]) == 128 else 'md5'
         scache.download('rpms/' + component, rec, sourcefiles[rec], os.path.join(tempdir, rec), hashtype=hashtype)
         if hashtype == 'sha512':
@@ -215,13 +214,16 @@ def build_component(component, scratch=False):
     global conf
     global status
     if conf['components'][component]['build']:
-#        try:
+        if 'ref' not in conf['components'][component]:
+            logging.warning(component + ' has no known ref to build, skipping.')
+            return
+        try:
             kojiconf = koji.read_config(profile_name=conf['components'][component]['profile'])
             session = koji.ClientSession(kojiconf['server'], opts=kojiconf)
             session.gssapi_login()
-            session.build(conf['components'][component]['destination'], conf['components'][component]['target'], {'scratch': scratch})
-#        except:
-#            logging.warning('Build submission for component ' + component + ' failed!')
+            session.build(conf['buildprefix'] + component + '#' + conf['components'][component]['ref'], conf['components'][component]['target'], {'scratch': scratch})
+        except:
+            logging.warning('Build submission for component ' + component + ' failed!')
     else:
         logging.info(component + ' not configured for build, skipping.')
 
