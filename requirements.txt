@@ -1,0 +1,9 @@
+fedora_messaging>=2.0.2
+gitpython>=3.1.9
+gunicorn>=20.0.4
+koji>=1.22.1
+pyyaml>=5.3.1
+regex>=2020.10.11
+rpkg>=1.61
+rpm-py-installer>=1.0.0
+
