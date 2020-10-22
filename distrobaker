@@ -1,0 +1,46 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+# SPDX-License-Identifier: MIT
+# Petr Šabata, Red Hat Inc., 2020
+#
+# DistroBaker
+# Sync tool for distibution git sync and build automation.
+#
+
+import argparse
+import logging
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), 'lib'))
+import distrobaker
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('config', help='configuration repository SCMURL')
+    ap.add_argument('-l', '--loglevel', dest='loglevel', help='logging level; default: info', default='INFO')
+    ap.add_argument('-u', '--update', dest='update', type=int, help='configuration refresh interval in minutes; default: 15', default=15)
+    ap.add_argument('-r', '--retry', dest='retry', type=int, help='number of retries on network failures; default: 5', default=5)
+    ap.add_argument('-1', '--oneshot', action='store_true', help='sync all components and exit', default=False)
+    args = ap.parse_args()
+    loglevel = getattr(logging, args.loglevel.upper())
+    if not isinstance(loglevel, int):
+        print('Invalid loglevel: {}'.format(args.loglevel))
+        sys.exit(1)
+    logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=loglevel)
+    distrobaker.retry = args.retry
+
+    if args.oneshot:
+        logging.info('Starting DistroBaker in the oneshot mode.')
+        if distrobaker.load_config(args.config) is None:
+            logging.critical('Could not load configuration.')
+            sys.exit(1)
+        logging.info('Configuration loaded.')
+        logging.critical('Not implemented.')
+        print('Configuration: {}'.format(str(distrobaker.get_config())))
+    else:
+        logging.info('Starting DistroBaker in the service mode.')
+        logging.critical('Not implemented.')
+
+if __name__ == "__main__":
+    main()
