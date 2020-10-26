@@ -22,6 +22,7 @@ def main():
     ap.add_argument('-u', '--update', dest='update', type=int, help='configuration refresh interval in minutes; default: 15', default=15)
     ap.add_argument('-r', '--retry', dest='retry', type=int, help='number of retries on network failures; default: 5', default=5)
     ap.add_argument('-1', '--oneshot', action='store_true', help='sync all components and exit', default=False)
+    ap.add_argument('-d', '--dry-run', dest='dryrun', action='store_true', help='do not upload, push or build anything', default=False)
     args = ap.parse_args()
     loglevel = getattr(logging, args.loglevel.upper())
     if not isinstance(loglevel, int):
