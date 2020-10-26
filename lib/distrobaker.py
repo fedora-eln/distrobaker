@@ -212,20 +212,26 @@ def sync_repo(comp, ns='rpms'):
     if c['main']['control']['merge']:
         logging.debug('Attempting to synchronize the {}/{} branches using the merge mechanism.'.format(ns, comp))
         # TODO: Generate a random branch name for the temporary branch in switch
-        # TODO: Handle errors
-        actor = git.Actor(c['main']['git']['user'], c['main']['git']['email'])
-        repo.git.checkout('source/{}'.format(sscm['ref']))
-        repo.git.switch('-c', 'source')
-        repo.git.merge('--allow-unrelated-histories', '--no-commit', '-s', 'ours', dscm['ref'])
-        repo.index.commit('Temporary working tree merge', author=actor, committer=actor)
-        repo.git.checkout(dscm['ref'])
-        repo.git.merge('--no-commit', '--squash', 'source')
-        repo.index.commit(c['main']['git']['message'] + c['main']['source']['scm'] + c['comps'][ns][comp]['source'], author=actor, committer=actor)
+        try:
+            actor = git.Actor(c['main']['git']['user'], c['main']['git']['email'])
+            repo.git.checkout('source/{}'.format(sscm['ref']))
+            repo.git.switch('-c', 'source')
+            repo.git.merge('--allow-unrelated-histories', '--no-commit', '-s', 'ours', dscm['ref'])
+            repo.index.commit('Temporary working tree merge', author=actor, committer=actor)
+            repo.git.checkout(dscm['ref'])
+            repo.git.merge('--no-commit', '--squash', 'source')
+            repo.index.commit(c['main']['git']['message'] + c['main']['source']['scm'] + c['comps'][ns][comp]['source'], author=actor, committer=actor)
+        except:
+            logging.error('Failed to merge {}/{}, skipping.'.format(ns, comp))
+            return None
         logging.debug('Successfully merged {}/{} with upstream.'.format(ns, comp))
     else:
         logging.debug('Attempting to synchronize the {}/{} branches using the clean pull mechanism.'.format(ns, comp))
-        # TODO: Handle errors
-        repo.git.pull('source', sscm['ref'])
+        try:
+            repo.git.pull('source', sscm['ref'])
+        except:
+            logging.error('Failed to perform a clean pull for {}/{}, skipping.'.format(ns, comp))
+            return None
         logging.debug('Successfully pulled {}/{} from upstream.'.format(ns, comp))
     logging.debug('Component {}/{} successfully synchronized.'.format(ns, comp))
     if os.path.isfile(os.path.join(tempdir.name, 'sources')):
