@@ -7,31 +7,52 @@ automatic component builds in the downstream distribution.
 
 Initially written for Red Hat Enterprise Linux and CentOS Stream.
 
-## Current features
+## Features
 
 * Configuration fetching and parser
 * Fedora messaging bus monitoring and its `buildsys.tag` messages
-* Git repository manipulation for SCM syncs (unauthenticated)
+* Git repository manipulation for SCM syncs with fast forward and
+  squash merging strategies
 
-## Planned
+## Usage
 
-* Reload configuration on the fly at certain intervals or with
-  each tag message (what's more feasible)
-* Tests with a local broker
-* A lot more error checking and recovery
-* Configurable merge message
+```
+% distrobaker [-l LOGLEVEL] [-u UPDATE] [-r RETRY] [-1] [-d] config
+```
+
+`config` is a mandatory positional argument and points to a configuration
+repository holding `distrobaker.yaml`; see below.  Optionally branch
+name can be specified using the `url#branch` syntax.
+
+`-l` or `--loglevel` accepts standard Python `logging` module log levels;
+defaults to `INFO`.
+
+`-u` or `--update` sets the configuration update interval in minutes;
+defaults to 15 minutes.
+
+`-r` or `--retry` sets the number of retries on failures, such as on
+clones, pulls, cache downloads and uploads and pushes; defaults to 5.
+
+`-1` or `--oneshot` runs DistroBaker in a one-shot mode, iterating over
+all configured components and resyncing.  Useful for bootstrapping;
+defaults to false, where DistroBaker runs in a service mode listening
+for tagging messages.
+
+`-d` or `--dry-run` runs DistroBaker in a dry-run mode where all
+potentially destructive operations are skipped.  This includes cache
+uploads, SCM pushes and component builds; defaults to non-pretend mode.
 
 ## Implementation
 
-The tool fetches its configuration from a git repository
-configured by the `DISTROBAKERCONF` environment variable.  It
-connects to the messaging bus as configured in the
-`fedora_messaging` configuration file, defined by the
-`FEDORA_MESSAGING_CONF` environment variable.  Only `buildsys.tag`
-messages are currently assumed.
+The tool fetches its configuration from the provided repository
+and either performs a complete sync of all configured components
+(in the one-shot mode) or listens for bus messages triggering
+individual component syncs (in the service mode, the default).
 
-Furthermore, `DISTROBAKERUSER` and `DISTROBAKEREMAIL` environment
-variables define the user used for git merge commits.
+If started in the service mode, it connects to the messaging bus
+as configured in the `fedora_messaging` configuration file, defined
+by the `FEDORA_MESSAGING_CONF` environment variable.
+Only `buildsys.tag` messages are currently processed.
 
 If the tag message matches any of the configured components, the
 tool syncs the SCM repositories as configured and, optionally,
@@ -43,162 +64,193 @@ Currently only Koji and Fedora Messaging are supported.
 ## Configuration format
 
 The tool expects the configuration file to be located in
-`${DISTROBAKERCONF}/distrobaker.yaml`.  A non-functional example
+`(config)/distrobaker.yaml`.  A non-functional example
 of the configuration file below.
 
 ```yaml
-# General source and destination configuration, plus default
-# values for components.
 configuration:
-    source: https://src.fedoraproject.org/rpms/
-    destination: /tmp/
-    sourcecache: https://src.fedoraproject.org/repo/pkgs
-    sourcecachecgi: https://src.fedoraproject.org/repo/pkgs/upload.cgi
-    sourcecachepath: "%(name)s/%(filename)s/%(hashtype)s/%(hash)s/%(filename)s"
-    destinationcache: https://src.elsewhere.org/repo/pkgs
-    destinationcachecgi: https://src.elsewhere.org/repo/pkgs/upload.cgi
-    destinationcachepath: "%(name)s/%(filename)s/%(hashtype)s/%(hash)s/%(filename)s"
-    trigger: rawhide
-    target: rhel-9.0.0-candidate
+  source:
+    scm: https://src.fedoraproject.org/
+    cache:
+      url: https://src.fedoraproject.org/repo/pkgs
+      cgi: https://src.fedoraproject.org/repo/pkgs/upload.cgi
+      path: "%(name)s/%(filename)s/%(hashtype)s/%(hash)s/%(filename)s"
+  destination:
+    scm: ssh://pkgs.example.com/
+    cache:
+      url: http://pkgs.example.com/repo
+      cgi: http://pkgs.example.com/lookaside/upload.cgi
+      path: "%(name)s/%(filename)s/%(hashtype)s/%(hash)s/%(filename)s"
+  trigger:
+    rpms: rawhide
+    modules: rawhide-modular
+  build:
     profile: brew
-    build: false
-    merge: false
-# Component configuration.  At least one component is required.
-# Source and destination properties are required and are appended
-# to the configuration properties of the same names.  Branch names
-# are optional and separated by the pound symbol (#).
-# Triggers, targets and build can be overriden per component if required.
+    scratch: false
+    prefix: git://pkgs.example.com/
+    target: fluff-42.0.0-alpha-candidate
+    mbs: https://mbs.example.com/
+  git:
+    author: DistroBaker
+    email: noreply@example.com
+    message: >
+      Merged update from upstream sources
+
+      This is an automated DistroBaker update from upstream sources.  If you do not
+      know what this is about or would like to opt out, contact the DistroBaker maintainers.
+  control:
+    build: true
+    merge: true
 components:
-    gcc:
-        source: gcc.git
-        destination: gcc#rhel-9.0.0
-    glibc:
-        source: glibc.git#test
-        destination: glibc#rhel-9.0.0-test
-        trigger: glibc-test-tag
-        target: rhel-9.0.0-glibc-test-candidate
-        build: true
-        merge: true
+  rpms:
+    gzip:
+      source: gzip.git
+      destination: gzip.git#fluff-42.0.0-alpha
+  modules:
+    testmodule-master:
+      source: testmodule.git#master
+      destination: testmodule#stream-master-fluff-42.0.0-alpha
 ```
 
-### Flags
+### Configuration options
 
 This section explains each of the tags noted in the example above.
 
-#### `source`
+#### `configuration`
 
-In the `configuration` section this holds the global dist-git prefix
-holding the sources and it's mandatory.  An example would be a local
-directory with bare repositories, or a remote dist-git instance, including
-the namespace.
+This section covers the basic DistroBaker configuration.  All fields are
+mandatory unless otherwise noted.
 
-In the `components` section this holds the component's suffix that is
-appended to the global prefix, creating a path to the unique repository.
-It may optionally include the branch name, separated from the repository
-name with the pound symbols (`#`).  If the branch name is not provided,
-`master` is assumed.  Mandatory.
+##### `source`
 
-#### `destination`
+The `source` block configures the upstream source for component sync,
+specifically the `scm` root as well as the lookaside `cache`.
 
-Analogous to source, in the `configuration` section this holds the global
-prefix for all destination repositories and is mandatory.
+`scm` is a base URL of the upstream source control.  Read-only access
+is sufficient.
 
-In the `components` section, this key holds the destination repository name
-which is appended to the global prefix, with the optional branch name
-at the end following the pound symbol (`#`).  If the branch is not provided,
-`master` is assumed.  Mandatory.
+`cache` and defines the lookaside `url`, `cgi` and `path`, where `url`
+is the cache base URL, `cgi` is its upload interface and `path` is
+Python-formatted string passed to pyrpkg defining the file path used
+by this particular cache.
 
-#### `*cache`, `*cachecgi`, `*cachepath`
+Example:
 
-The cache options define lookaside cache location and interfaces for the
-source and the destination.
+```yaml
+source:
+  scm: https://src.fedoraproject.org
+  cache:
+    url: https://src.fedoraproject.org/repo/pkgs
+    cgi: https://src.fedoraproject.org/repo/pkgs/upload.cgi
+    path: "%(name)s/%(filename)s/%(hashtype)s/%(hash)s/%(filename)s"
+```
 
-The `cache` option is the base URL of the cache, the `cachecgi` points to
-the CGI upload interface and the `cachepath` is substitution pattern string
-appended to the base path.
+##### `destination`
 
-#### `trigger`
+The `destination` block configures the downstream destination source control and
+cache.  DistroBaker needs write access to both to effectively sync components.
 
-Defines the Koji tag name serving as a trigger during the build tagging event.
-This can be defined both globally in the `configuration` section for all
-components, or individually overridden in the `components` section.
+The structure is the same as that of the `source` block.
 
-If not defined per component, the global default is used.  The default is
-mandatory, per component definitions are optional.
+##### `trigger`
 
-DistroBaker watches for the `trigger` build tagging events on the source
-Koji instance via fedora-messaging configured in `FEDORA_MESSAGING_CONF`.
+The `trigger` block defines Koji tag triggers for supported namespaces.  Currently
+this includes `rpms` and `modules`.  The properties are namespace names, their
+values are the respective tag names.
 
-#### `target`
+Example:
 
-Defines the destination Koji build target, a Koji-defined pair of buildroot
-and destination tags in the destination Koji instance.  This can be defined
-both globally in the `configuration` section for all components, or individually
-overrides in the `components` section.
+```yaml
+trigger:
+  rpms: rawhide
+  modules: rawhide-modular
+```
 
-If not defined per component, the global default is used.  The default is
-mandatory, per component definitions are optional.
+##### `build`
 
-Destination Koji instance is determined by the profile flag, see below.
+The `build` block configures the destination build system, both Koji and MBS.
 
-#### `profile`
+The `profile` property defines the Koji profile configuration name.  These are
+typically sourced from `/etc/koji` and provide relevant interfaces and certificates.
 
-Defines the rpkg profile used, configuring access to the destinations Koji
-instance.  The DistroBaker instance must have access credentials to access
-the target instance, namely a valid Kerberos ticket.
+The `scratch` property defines whether submitted builds should be real or scratch
+builds.  This is optional and defaults to `false`.
 
-The flag can be configured globally in the `configuration` section and
-individually overrides in the `components` section.
+The `prefix` property defines the URL used to prefix the namespace and the component
+name upon submission.  This is typically an SCM interface the build system can access.
+Could be read-only.
 
-The global default is mandatory, the per component configuration optional.
-If per component value is not defined, the global is used.
+The `target` property defines the destination build system target.  Targets are buildroot
+and destination tag tuples.
 
-#### `build`
+The `mbs` property is currently a string placeholder.
 
-A boolean value controlling whether component builds should also be submitted.
-Like most flags, it can be defined globally in the `configuration` section and
-individually overriden in the `components` section.
+##### `git`
 
-The global default is mandatory, the per component configuration optional.  If
-per component value is not defined, the global is used.
+The `git` block configures git `author`, `email` and the commit `message` used
+during merge operations.
 
-If true, DistroBaker will submit builds to the destination Koji instance as per
-`profile` and `target` flags.
+The `message` is always extended with `Source: url#ref`, referencing the upstream
+commit used as a base for the merge.
 
-If false, DistroBaker will only sync dist-git content.
+Hint: Use the `|`-style YAML text blocks to preserve newlines.
 
-#### `merge`
+Example:
 
-A boolean value controlling whether DistroBaker should merge changes with a merge
-commit in cases where clean fast forward merges (or pulls) are not possible.
-Like most flags, it can be defined globally in the `configuration` section and
-individually override in the `components` section.
+```yaml
+git:
+  author: DistroBaker
+  email: osci-team@example.com
+  message: |
+    Merged update from upstream sources
 
-The global default is mandatory, the per component configuration optional.  If
-per component value is not defined, the global is used.
+    This is an automated DistroBaker update from upstream sources.
+    If you do not know what this is about or would like to opt out,
+    contact the OSCI team.
+```
 
-If true, DistroBaker will merge source branches into destination branches using
-the `-X theirs` strategy and create a merge commit using `DISTROBAKERUSER` and
-`DISTROBAKEREMAIL`.  The commit message itself is currently hardcoded.
+##### `control`
 
-If false, DistroBaker will report a warning and continue.
+The `control` block configures the basic operation.
 
-Note that pushing merge commits will prevent future pulls and all syncs from that
-point will require a new merge commit.  Also note the potential of destroying
-downstream-only changes with this approach.  The recommended setting is `false`.
+The `build` property controls whether builds get submitted.
 
-## Scripts
+The `merge` property controls whether DistroBaker attempts to do clean
+fast forward pulls (`false`) or squashed merges (`true`).
 
-### `distrobaker.py`
+Example:
 
-The main entry point for the DistroBaker service.
+```yaml
+control:
+  build: true
+  merge: true
+```
 
-### `initialsync.py`
+#### `components`
 
-The `initialsync.py` script performs the initial sync based on the configuration
-without listening to messages and triggering syncs and builds via tagging events.
+This section defines synchronization components listed under their respective
+namespaces.  Currently `rpms` and `modules` are supported.  Namespace and
+component key names matter for SCM URL affixing and lookaside cache paths.
 
-Its purpose is to prepare the target distribution in one go and should generally
-only be used once, with DistroBaker later keeping it up to date.
+Every component must define two fields, `source` and `destination`.
 
-It uses the DistroBaker module and `DISTROBAKER` variables have to be set.
+##### `source`
+
+The source repository for the component with optional branch in the
+`repository#branch` format.  Repository name is concatenated with the
+source SCM URL (`configuration.source.scm`) and the relevant namespace.
+
+If no branch is provided, `master` is assumed.
+
+Example: `source: gzip.git#f34`
+
+##### `destination`
+
+The destination repository for the component with optional branch in the
+`repository#branch` format.  Repository name is concatenated with the
+destination SCM URL (`configuration.destination.scm`) and the relevant
+namespace.
+
+If no branch is provided, `master` is assumed.
+
+Example: `destination: gzip.git#fluff-42.0.0-beta`
