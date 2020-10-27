@@ -295,7 +295,7 @@ def sync_cache(comp, sources, ns='rpms', dry_run=False):
     tempdir = tempfile.TemporaryDirectory(prefix='cache-{}-{}-'.format(ns, comp))
     logging.debug('Temporary directory created: {}'.format(tempdir.name))
     for f in sums:
-        hashtype = 'sha512' if len(sums[f]) else 'md5'
+        hashtype = 'sha512' if len(sums[f]) == 128 else 'md5'
         # There's no API for this and .upload doesn't let us override it
         dcache.hashtype = hashtype
         for attempt in range(retry):
