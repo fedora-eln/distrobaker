@@ -176,7 +176,7 @@ def load_config(crepo):
 # TODO: Checkout specific ref from the configured branch if requested
 # TODO: The main config should still hold branch names but messages can request specific refs from those branches
 # TODO: For modules & merge, rewrite modulemd and merge components recurseively
-def sync_repo(comp, ns='rpms'):
+def sync_repo(comp, ns='rpms', dry_run=False):
     logging.info('Synchronizing SCM for {}/{}.'.format(ns, comp))
     tempdir = tempfile.TemporaryDirectory(prefix='repo-{}-{}-'.format(ns, comp))
     logging.debug('Temporary directory created: {}'.format(tempdir.name))
@@ -244,9 +244,12 @@ def sync_repo(comp, ns='rpms'):
     logging.debug('Pushing synchronized contents for {}/{}.'.format(ns, comp))
     for attempt in range(retry):
         try:
-            # TODO: Uncomment after testing
-            #repo.git.push('--set-upstream', 'origin', dst['ref'])
-            pass
+            if not dry_run:
+                logging.debug('Pushing {}/{}.'.format(ns, comp))
+                repo.git.push('--set-upstream', 'origin', dst['ref'])
+                logging.debug('Successfully pushed {}/{}.'.format(ns, comp))
+            else:
+                logging.debug('Running in dry run mode, not pushing {}/{}.'.format(ns, comp))
         except:
             logging.warning('Pushing attempt #{}/{} failed, retrying.'.format(attempt + 1, retry))
             continue
@@ -260,7 +263,7 @@ def sync_repo(comp, ns='rpms'):
 
 # TODO: Handle multiple hashes for the same filename.
 #       Perhaps via a list of tuples and a directory structure similar to download_path in tempdir
-def sync_cache(comp, sources, ns='rpms'):
+def sync_cache(comp, sources, ns='rpms', dry_run=False):
     sums = dict()
     logging.debug('Processing lookaside cache sources for {}/{}.'.format(ns, comp))
     try:
@@ -292,8 +295,11 @@ def sync_cache(comp, sources, ns='rpms'):
                     logging.debug('File {} for {}/{} not available in the destination cache, downloading.'.format(f, ns, comp))
                     scache.download('{}/{}'.format(ns, comp), f, sums[f], os.path.join(tempdir.name, f), hashtype=hashtype)
                     logging.debug('File {} for {}/{} successfully downloaded.  Uploading to the destination cache.'.format(f, ns, comp))
-                    dcache.upload('{}/{}'.format(ns, comp), os.path.join(tempdir.name, f), sums[f])
-                    logging.debug('File {} for {}/{} successfully uploaded to the destination cache.'.format(f, ns, comp))
+                    if not dry_run:
+                        dcache.upload('{}/{}'.format(ns, comp), os.path.join(tempdir.name, f), sums[f])
+                        logging.debug('File {} for {}/{} successfully uploaded to the destination cache.'.format(f, ns, comp))
+                    else:
+                        logging.debug('Running in dry run mode, not uploading {} for {}/{}.'.format(f, ns, comp))
                 else:
                     logging.debug('File {} for {}/{} already uploaded, skipping.'.format(f, ns, comp))
             except:
@@ -306,7 +312,7 @@ def sync_cache(comp, sources, ns='rpms'):
     return sums
 
 # TODO: Implement modules
-def build_comp(comp, ref, ns='rpms'):
+def build_comp(comp, ref, ns='rpms', dry_run=False):
     logging.info('Processing build for {}/{}.'.format(ns, comp))
     if ns == 'rpms':
         try:
@@ -321,11 +327,16 @@ def build_comp(comp, ref, ns='rpms'):
             logging.error('Failed authenticating against koji while building {}/{}, skipping.'.format(ns, comp))
             return None
         try:
-            task = buildsys.build('{}{}#{}'.format(c['main']['build']['prefix'], comp, ref), c['main']['build']['target'], { 'scratch': c['main']['build']['scratch'] })
-            logging.info('Build submitted for {}/{}; task {}; SCMURL: {}{}#{}.'.format(ns, comp, task, c['main']['build']['prefix'], comp, ref))
-            return task
+            if not dry_run:
+                task = buildsys.build('{}{}#{}'.format(c['main']['build']['prefix'], comp, ref), c['main']['build']['target'], { 'scratch': c['main']['build']['scratch'] })
+                logging.info('Build submitted for {}/{}; task {}; SCMURL: {}{}#{}.'.format(ns, comp, task, c['main']['build']['prefix'], comp, ref))
+                return task
+            else:
+                logging.info('Running in the dry mode, not submitting any builds for {}/{} ({}{}#{}).'.format(ns, comp, c['main']['build']['prefix'], comp, ref))
+                return 0
         except:
-            pass
+            logging.error('Failed submitting build for {}/{} ({}{}#{}).'.format(ns, comp, c['main']['build']['prefix'], comp, ref))
+            return None
     elif ns == 'modules':
         logging.critical('Cannot build {}/{}; module building not implemented.'.format(ns, comp))
         return None
