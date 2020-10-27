@@ -31,12 +31,12 @@ def main():
         sys.exit(1)
     logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=loglevel)
     distrobaker.retry = args.retry
+    if distrobaker.load_config(args.config) is None:
+        logging.critical('Could not load configuration.')
+        sys.exit(1)
+    logging.info('Configuration loaded.')
     if args.oneshot:
         logging.info('Starting DistroBaker in the oneshot mode.')
-        if distrobaker.load_config(args.config) is None:
-            logging.critical('Could not load configuration.')
-            sys.exit(1)
-        logging.info('Configuration loaded.')
         # XXX: Only handling rpms at the moment
         logging.warning('Modules currently not implemented and will be ignored.')
         for ns in ('rpms', ):
