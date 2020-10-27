@@ -8,6 +8,7 @@
 #
 
 import argparse
+import fedora_messaging.api
 import logging
 import os
 import sys
@@ -50,9 +51,12 @@ def main():
                         logging.error('Failed to submit a build for {}/{}.'.format(ns, comp))
                 else:
                     logging.error('Failed to sync {}/{}, not attempting to build anything.'.format(ns, comp))
+        logging.info('All components processed, exiting.')
     else:
         logging.info('Starting DistroBaker in the service mode.')
-        logging.critical('Not implemented.')
+        distrobaker._messaging_dry_run = args.dry_run
+        fedora_messaging.api.consume(distrobaker.process_message)
+        logging.critical('Failed connecting to the message bus, exiting.')
 
 if __name__ == "__main__":
     main()

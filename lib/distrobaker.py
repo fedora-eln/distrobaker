@@ -14,6 +14,10 @@ c = dict()
 # Retry attempts if things fail
 retry = 5
 
+# Workaround for messaging API callbacks
+# See process_message() for details
+_messaging_dry_run = False
+
 # sources file regular expression
 sre = regex.compile(r'^(?>(?P<hash>[a-f0-9]{32})  (?P<file>.+)|SHA512 \((?P<file>.+)\) = (?<hash>[a-f0-9]{128}))$')
 
@@ -345,10 +349,40 @@ def build_comp(comp, ref, ns='rpms', dry_run=False):
         logging.critical('Cannot build {}/{}; unknown namespace.'.format(ns, comp))
         return None
 
-# TODO: Implement this
-# TODO: Trigger syncs and builds
-def process_message(comp, msg):
-    pass
+def process_message(msg):
+    # Messaging requires callbacks with a single argument.
+    # An ugly workaround for now.
+    dry_run = _messaging_dry_run
+    logging.debug('Received a message with topic {}.'.format(msg.topic))
+    if msg.topic.endswith('buildsys.tag'):
+        try:
+            logging.debug('Processing a tagging event message.')
+            comp = msg.body['name']
+            tag = msg.body['tag']
+            logging.debug('Tagging event for {}, tag {} received.'.format(comp, tag))
+        except:
+            logging.error('Failed to process the message: {}'.format(msg))
+        if tag == c['main']['trigger']['rpms']:
+            logging.debug('Message tag configured as an RPM trigger, processing.')
+            if comp in c['comps']['rpms']:
+                logging.info('Handling an RPM trigger for {}, tag {}.'.format(comp, tag))
+                ref = sync_repo(comp, ns='rpms', dry_run=dry_run)
+                if ref is not None:
+                    task = build_comp(comp, ref, ns='rpms', dry_run=dry_run)
+                    if task is not None:
+                        logging.info('Build submission of {}/{} complete, task {}, trigger processed.'.format('rpms', comp, task))
+                    else:
+                        logging.error('Build submission of {}/{} failed, aborting.trigger.'.format('rpms', comp))
+                else:
+                    logging.error('Synchronization of {}/{} failed, aborting trigger.'.format('rpms', comp))
+            else:
+                logging.debug('RPM component {} not configured for sync, ignoring.'.format(comp))
+        elif tag == c['main']['trigger']['modules']:
+            logging.error('The message matches our module configuration but module building not implemented, ignoring.')
+        else:
+            logging.debug('Message tag not configured as a trigger, ignoring.')
+    else:
+        logging.warning('Unable to handle {} topics, ignoring.'.format(msg.topic))
 
 # TODO: Implement this
 # TODO: Get SCMURL for the given build
