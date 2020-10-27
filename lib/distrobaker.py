@@ -140,7 +140,7 @@ def load_config(crepo):
             n['control'] = dict()
             for k in ('build', 'merge'):
                 if k in cnf['control']:
-                    n['control'][k] = bool(cnf['control'])
+                    n['control'][k] = bool(cnf['control'][k])
                 else:
                     logging.error('Configuration error: control.{} missing.'.format(k))
                     return None
@@ -152,17 +152,17 @@ def load_config(crepo):
         return None
     components = 0
     if 'components' in y:
-        n['comps'] = dict()
+        nc = dict()
         cnf = y['components']
         for k in ('rpms', 'modules'):
             if k in cnf:
-                n['comps'][k] = dict()
+                nc[k] = dict()
                 for p in cnf[k].keys():
                     components += 1
-                    n['comps'][k][p] = dict()
+                    nc[k][p] = dict()
                     for ck in ('source', 'destination'):
                         if ck in cnf[k][p]:
-                            n['comps'][k][p][ck] = str(cnf[k][p][ck])
+                            nc[k][p][ck] = str(cnf[k][p][ck])
                         else:
                             logging.error('Configuration error: components.{}.{}.{} missing.'.format(k, p, ck))
                             return None
@@ -171,6 +171,7 @@ def load_config(crepo):
     if not components:
         logging.warning('No components configured.  Nothing to do.')
     c['main'] = n
+    c['comps'] = nc
     return c
 
 # TODO: Checkout specific ref from the configured branch if requested
@@ -213,7 +214,7 @@ def sync_repo(comp, ns='rpms', dry_run=False):
         logging.debug('Attempting to synchronize the {}/{} branches using the merge mechanism.'.format(ns, comp))
         # TODO: Generate a random branch name for the temporary branch in switch
         try:
-            actor = git.Actor(c['main']['git']['user'], c['main']['git']['email'])
+            actor = git.Actor(c['main']['git']['author'], c['main']['git']['email'])
             repo.git.checkout('source/{}'.format(sscm['ref']))
             repo.git.switch('-c', 'source')
             repo.git.merge('--allow-unrelated-histories', '--no-commit', '-s', 'ours', dscm['ref'])
@@ -228,7 +229,7 @@ def sync_repo(comp, ns='rpms', dry_run=False):
     else:
         logging.debug('Attempting to synchronize the {}/{} branches using the clean pull mechanism.'.format(ns, comp))
         try:
-            repo.git.pull('source', sscm['ref'])
+            repo.git.pull('--ff-only', 'source', sscm['ref'])
         except:
             logging.error('Failed to perform a clean pull for {}/{}, skipping.'.format(ns, comp))
             return None
