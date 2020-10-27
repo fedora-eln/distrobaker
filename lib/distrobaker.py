@@ -230,9 +230,8 @@ def sync_repo(comp, ns='rpms', dry_run=False):
             with open(msgfile.name, 'w') as f:
                 f.write(msg)
             repo.git.commit('--author', actor, '--allow-empty', '-F', msgfile.name)
-        except Exception as e:
+        except:
             logging.error('Failed to merge {}/{}, skipping.'.format(ns, comp))
-            logging.error(e)
             return None
         logging.debug('Successfully merged {}/{} with upstream.'.format(ns, comp))
     else:
@@ -256,7 +255,7 @@ def sync_repo(comp, ns='rpms', dry_run=False):
         try:
             if not dry_run:
                 logging.debug('Pushing {}/{}.'.format(ns, comp))
-                repo.git.push('--set-upstream', 'origin', dst['ref'])
+                repo.git.push('--set-upstream', 'origin', dscm['ref'])
                 logging.debug('Successfully pushed {}/{}.'.format(ns, comp))
             else:
                 logging.debug('Running in dry run mode, not pushing {}/{}.'.format(ns, comp))
