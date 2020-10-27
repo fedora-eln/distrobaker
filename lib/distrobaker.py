@@ -185,9 +185,9 @@ def sync_repo(comp, ns='rpms', dry_run=False):
     logging.info('Synchronizing SCM for {}/{}.'.format(ns, comp))
     tempdir = tempfile.TemporaryDirectory(prefix='repo-{}-{}-'.format(ns, comp))
     logging.debug('Temporary directory created: {}'.format(tempdir.name))
-    logging.debug('Cloning {}/{} from {}'.format(ns, comp, c['main']['destination']['scm'] + c['comps'][ns][comp]['destination']))
-    sscm = split_scmurl(c['main']['source']['scm'] + c['comps'][ns][comp]['source'])
-    dscm = split_scmurl(c['main']['destination']['scm'] + c['comps'][ns][comp]['destination'])
+    logging.debug('Cloning {}/{} from {}/{}/{}'.format(ns, comp, c['main']['destination']['scm'], ns, c['comps'][ns][comp]['destination']))
+    sscm = split_scmurl('{}/{}/{}'.format(c['main']['source']['scm'], ns, c['comps'][ns][comp]['source']))
+    dscm = split_scmurl('{}/{}/{}'.format(c['main']['destination']['scm'], ns, c['comps'][ns][comp]['destination']))
     for attempt in range(retry):
         try:
             repo = git.Repo.clone_from(dscm['url'], tempdir.name, branch=dscm['ref'])
@@ -218,16 +218,21 @@ def sync_repo(comp, ns='rpms', dry_run=False):
         logging.debug('Attempting to synchronize the {}/{} branches using the merge mechanism.'.format(ns, comp))
         # TODO: Generate a random branch name for the temporary branch in switch
         try:
-            actor = git.Actor(c['main']['git']['author'], c['main']['git']['email'])
+            actor = '{} <{}>'.format(c['main']['git']['author'], c['main']['git']['email'])
             repo.git.checkout('source/{}'.format(sscm['ref']))
             repo.git.switch('-c', 'source')
             repo.git.merge('--allow-unrelated-histories', '--no-commit', '-s', 'ours', dscm['ref'])
-            repo.index.commit('Temporary working tree merge', author=actor, committer=actor)
+            repo.git.commit('--author', actor, '--allow-empty', '-m', 'Temporary working tree merge')
             repo.git.checkout(dscm['ref'])
             repo.git.merge('--no-commit', '--squash', 'source')
-            repo.index.commit(c['main']['git']['message'] + c['main']['source']['scm'] + c['comps'][ns][comp]['source'], author=actor, committer=actor)
-        except:
+            msg = '{}\nSource: {}#{}'.format(c['main']['git']['message'], sscm['url'], repo.git.rev_parse('source/{}'.format(sscm['ref'])))
+            msgfile = tempfile.NamedTemporaryFile(prefix='msg-{}-{}-'.format(ns, comp))
+            with open(msgfile.name, 'w') as f:
+                f.write(msg)
+            repo.git.commit('--author', actor, '--allow-empty', '-F', msgfile.name)
+        except Exception as e:
             logging.error('Failed to merge {}/{}, skipping.'.format(ns, comp))
+            logging.error(e)
             return None
         logging.debug('Successfully merged {}/{} with upstream.'.format(ns, comp))
     else:
@@ -333,14 +338,14 @@ def build_comp(comp, ref, ns='rpms', dry_run=False):
             return None
         try:
             if not dry_run:
-                task = buildsys.build('{}{}#{}'.format(c['main']['build']['prefix'], comp, ref), c['main']['build']['target'], { 'scratch': c['main']['build']['scratch'] })
-                logging.info('Build submitted for {}/{}; task {}; SCMURL: {}{}#{}.'.format(ns, comp, task, c['main']['build']['prefix'], comp, ref))
+                task = buildsys.build('{}/{}/{}#{}'.format(c['main']['build']['prefix'], ns, comp, ref), c['main']['build']['target'], { 'scratch': c['main']['build']['scratch'] })
+                logging.info('Build submitted for {}/{}; task {}; SCMURL: {}/{}/{}#{}.'.format(ns, comp, task, c['main']['build']['prefix'], ns, comp, ref))
                 return task
             else:
-                logging.info('Running in the dry mode, not submitting any builds for {}/{} ({}{}#{}).'.format(ns, comp, c['main']['build']['prefix'], comp, ref))
+                logging.info('Running in the dry mode, not submitting any builds for {}/{} ({}/{}/{}#{}).'.format(ns, comp, c['main']['build']['prefix'], ns, comp, ref))
                 return 0
         except:
-            logging.error('Failed submitting build for {}/{} ({}{}#{}).'.format(ns, comp, c['main']['build']['prefix'], comp, ref))
+            logging.error('Failed submitting build for {}/{} ({}/{}/{}#{}).'.format(ns, comp, c['main']['build']['prefix'], ns, comp, ref))
             return None
     elif ns == 'modules':
         logging.critical('Cannot build {}/{}; module building not implemented.'.format(ns, comp))
