@@ -292,7 +292,7 @@ def sync_cache(comp, sources, ns='rpms', dry_run=False):
     scache.download_path = c['main']['source']['cache']['path']
     dcache = pyrpkg.lookaside.CGILookasideCache('sha512', c['main']['destination']['cache']['url'], c['main']['destination']['cache']['cgi'])
     dcache.download_path = c['main']['destination']['cache']['path']
-    tempdir = tempfile.TemporaryDirectory('cache-{}-{}-'.format(ns, comp))
+    tempdir = tempfile.TemporaryDirectory(prefix='cache-{}-{}-'.format(ns, comp))
     logging.debug('Temporary directory created: {}'.format(tempdir.name))
     for f in sums:
         hashtype = 'sha512' if len(sums[f]) else 'md5'
