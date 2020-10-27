@@ -22,7 +22,7 @@ def main():
     ap.add_argument('-u', '--update', dest='update', type=int, help='configuration refresh interval in minutes; default: 15', default=15)
     ap.add_argument('-r', '--retry', dest='retry', type=int, help='number of retries on network failures; default: 5', default=5)
     ap.add_argument('-1', '--oneshot', action='store_true', help='sync all components and exit', default=False)
-    ap.add_argument('-d', '--dry-run', dest='dryrun', action='store_true', help='do not upload, push or build anything', default=False)
+    ap.add_argument('-d', '--dry-run', dest='dry_run', action='store_true', help='do not upload, push or build anything', default=False)
     args = ap.parse_args()
     loglevel = getattr(logging, args.loglevel.upper())
     if not isinstance(loglevel, int):
@@ -30,15 +30,26 @@ def main():
         sys.exit(1)
     logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=loglevel)
     distrobaker.retry = args.retry
-
     if args.oneshot:
         logging.info('Starting DistroBaker in the oneshot mode.')
         if distrobaker.load_config(args.config) is None:
             logging.critical('Could not load configuration.')
             sys.exit(1)
         logging.info('Configuration loaded.')
-        logging.critical('Not implemented.')
-        print('Configuration: {}'.format(str(distrobaker.get_config())))
+        # XXX: Only handling rpms at the moment
+        logging.warning('Modules currently not implemented and will be ignored.')
+        for ns in ('rpms', ):
+            logging.info('Processing components in the {} namespace.'.format(ns))
+            for comp in distrobaker.get_config()['comps'][ns]:
+                ref = distrobaker.sync_repo(comp, ns=ns, dry_run=args.dry_run)
+                if ref is not None:
+                    build = distrobaker.build_comp(comp, ref, ns=ns, dry_run=args.dry_run)
+                    if build is not None:
+                        logging.info('Build for {}/{} submitted: {}'.format(ns, comp, build))
+                    else:
+                        logging.error('Failed to submit a build for {}/{}.'.format(ns, comp))
+                else:
+                    logging.error('Failed to sync {}/{}, not attempting to build anything.'.format(ns, comp))
     else:
         logging.info('Starting DistroBaker in the service mode.')
         logging.critical('Not implemented.')
