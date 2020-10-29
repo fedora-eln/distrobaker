@@ -214,6 +214,13 @@ def sync_repo(comp, ns='rpms', dry_run=False):
         logging.error('Exhausted upstream fetching attempts for {}/{}, skipping.'.format(ns, comp))
         return None
     logging.debug('Successfully fetched upstream repository for {}/{}.'.format(ns, comp))
+    logging.debug('Configuring repository properties for {}/{}.'.format(ns, comp))
+    try:
+        repo.git.config('user.name', c['main']['git']['author'])
+        repo.git.config('user.email', c['main']['git']['email'])
+    except:
+        logging.error('Failed configuring the git repository while processing {}/{}, skipping.'.format(ns, comp))
+        return None
     if c['main']['control']['merge']:
         logging.debug('Attempting to synchronize the {}/{} branches using the merge mechanism.'.format(ns, comp))
         # TODO: Generate a random branch name for the temporary branch in switch
