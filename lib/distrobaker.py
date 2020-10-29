@@ -252,7 +252,7 @@ def sync_repo(comp, ns='rpms', dry_run=False):
     logging.debug('Component {}/{} successfully synchronized.'.format(ns, comp))
     if os.path.isfile(os.path.join(tempdir.name, 'sources')):
         logging.debug('Lookaside cache sources for {}/{} found, synchronizing.'.format(ns, comp))
-        if sync_cache(comp, os.path.join(tempdir.name, 'sources'), ns=ns) is not None:
+        if sync_cache(comp, os.path.join(tempdir.name, 'sources'), ns=ns, dry_run=dry_run) is not None:
             logging.debug('Lookaside cache sources for {}/{} synchronized.'.format(ns, comp))
         else:
             logging.error('Failed to synchronize lookaside cache sources for {}/{}, skipping.'.format(ns, comp))
@@ -265,7 +265,9 @@ def sync_repo(comp, ns='rpms', dry_run=False):
                 repo.git.push('--set-upstream', 'origin', dscm['ref'])
                 logging.debug('Successfully pushed {}/{}.'.format(ns, comp))
             else:
-                logging.debug('Running in dry run mode, not pushing {}/{}.'.format(ns, comp))
+                logging.debug('Pushing {}/{} (--dry-run).'.format(ns, comp))
+                repo.git.push('--dry-run', '--set-upstream', 'origin', dscm['ref'])
+                logging.debug('Successfully pushed {}/{} (--dry-run).'.format(ns, comp))
         except:
             logging.warning('Pushing attempt #{}/{} failed, retrying.'.format(attempt + 1, retry))
             continue
