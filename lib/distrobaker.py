@@ -170,8 +170,9 @@ def load_config(crepo):
                         else:
                             logging.error('Configuration error: components.{}.{}.{} missing.'.format(k, p, ck))
                             return None
+                logging.info('Found {} configured component(s) in the {} namespace.'.format(len(nc[k]), k))
             else:
-                logging.warning('Configuration warning: no {} configured.'.format(k))
+                logging.info('No components configured in the {} namespace.'.format(k))
     if not components:
         logging.warning('No components configured.  Nothing to do.')
     c['main'] = n
