@@ -17,7 +17,7 @@ Initially written for Red Hat Enterprise Linux and CentOS Stream.
 ## Usage
 
 ```
-% distrobaker [-l LOGLEVEL] [-u UPDATE] [-r RETRY] [-1] [-d] config
+% distrobaker [-l LOGLEVEL] [-u UPDATE] [-r RETRY] [-1] [-d|-n] [-s SELECT] config
 ```
 
 `config` is a mandatory positional argument and points to a configuration
@@ -38,9 +38,28 @@ all configured components and resyncing.  Useful for bootstrapping;
 defaults to false, where DistroBaker runs in a service mode listening
 for tagging messages.
 
-`-d` or `--dry-run` runs DistroBaker in a dry-run mode where all
+`-d`, `-n` or `--dry-run` runs DistroBaker in a dry-run mode where all
 potentially destructive operations are skipped.  This includes cache
 uploads, SCM pushes and component builds; defaults to non-pretend mode.
+
+`-s` or `--select` limits the component set to the specified space-separated
+list of components in the `ns/component` form.  Components must be configured.
+
+### Examples
+
+Start in the generic service mode, with debug logging, fetching the
+configuration from a remote repository and the `prod` branch:
+
+`% distrobaker -l debug https://example.com/distrobaker.git#prod`
+
+Do a one time sync of all the components, excessively retrying 15 times
+upon each failure.  Configuration is in a local repository named `conf`.
+
+`% distrobaker -1 -r 15 conf`
+
+A single test sync run for three specific components using a local repository:
+
+`% distrobaker -1 -n -s 'rpms/gzip rpms/bzip2 rpms/gzip' /tmp/conf#testbranch`
 
 ## Implementation
 

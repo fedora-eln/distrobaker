@@ -11,6 +11,7 @@ import argparse
 import fedora_messaging.api
 import logging
 import os
+import regex
 import sys
 import threading
 import time
@@ -43,27 +44,54 @@ def main():
     ap.add_argument('-u', '--update', dest='update', type=int, help='configuration refresh interval in minutes; default: 15', default=15)
     ap.add_argument('-r', '--retry', dest='retry', type=int, help='number of retries on network failures; default: 5', default=5)
     ap.add_argument('-1', '--oneshot', action='store_true', help='sync all components and exit', default=False)
-    ap.add_argument('-d', '--dry-run', dest='dry_run', action='store_true', help='do not upload, push or build anything', default=False)
+    ap.add_argument('-d', '-n', '--dry-run', dest='dry_run', action='store_true', help='do not upload, push or build anything', default=False)
+    ap.add_argument('-s', '--select', dest='select', help='space-separated list of configured components to sync in the ns/component form; defaults to all')
     args = ap.parse_args()
     loglevel = getattr(logging, args.loglevel.upper())
     if not isinstance(loglevel, int):
         print('Invalid loglevel: {}'.format(args.loglevel))
         sys.exit(1)
     logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=loglevel)
+    comps = dict()
+    if args.select:
+        if not args.oneshot:
+            logging.critical('Selecting components only works with oneshot mode.')
+            sys.exit(128)
+        else:
+            compre = regex.compile(r'^(?<ns>rpms|modules)/(?<comp>[A-Za-z0-9_-]+)$')
+            for sel in regex.split(r'\s+', args.select):
+                m = compre.match(sel)
+                if m is None:
+                    logging.critical('Selected component "{}" not understood, aborting.'.format(sel))
+                    sys.exit(128)
+                m = m.groupdict()
+                if m['ns'] not in comps:
+                    comps[m['ns']] = list()
+                comps[m['ns']].append(m['comp'])
+        if not comps:
+            logging.critical('No components selected, aborting.')
+            sys.exit(128)
     distrobaker.retry = args.retry
     if distrobaker.load_config(args.config) is None:
         logging.critical('Could not load configuration.')
         sys.exit(1)
     logging.info('Configuration loaded.')
-    config = args.config
-    interval = 60 * args.update
     if args.oneshot:
         logging.info('Starting DistroBaker in the oneshot mode.')
         # XXX: Only handling rpms at the moment
         logging.warning('Modules currently not implemented and will be ignored.')
         for ns in ('rpms', ):
             logging.info('Processing components in the {} namespace.'.format(ns))
-            for comp in sorted(distrobaker.get_config()['comps'][ns].keys(), key=str.lower):
+            if not comps:
+                if ns in distrobaker.get_config()['comps']:
+                    comps[ns] = distrobaker.get_config()['comps'][ns].keys()
+                else:
+                    logging.info('No components configured or selected in this namespace.')
+                    continue
+            for comp in sorted(comps[ns], key=str.lower):
+                if ns not in distrobaker.get_config()['comps'] or comp not in distrobaker.get_config()['comps'][ns]:
+                    logging.warning('Selected component "{}/{}" not configured, skipping.'.format(ns, comp))
+                    continue
                 ref = distrobaker.sync_repo(comp, ns=ns, dry_run=args.dry_run)
                 if ref is not None:
                     build = distrobaker.build_comp(comp, ref, ns=ns, dry_run=args.dry_run)
