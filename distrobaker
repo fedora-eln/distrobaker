@@ -86,7 +86,11 @@ def main():
                 if ns in distrobaker.get_config()['comps']:
                     comps[ns] = distrobaker.get_config()['comps'][ns].keys()
                 else:
-                    logging.info('No components configured or selected in this namespace.')
+                    logging.info('No components configured in this namespace.')
+                    continue
+            else:
+                if ns not in comps:
+                    logging.info('No components selected in this namespace.')
                     continue
             for comp in sorted(comps[ns], key=str.lower):
                 if ns not in distrobaker.get_config()['comps'] or comp not in distrobaker.get_config()['comps'][ns]:
