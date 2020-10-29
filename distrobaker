@@ -12,9 +12,29 @@ import fedora_messaging.api
 import logging
 import os
 import sys
+import threading
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), 'lib'))
 import distrobaker
+
+def update(config, interval):
+    interval_fail = 60
+    logging.info('Reloading DistroBaker configuration in {} seconds.'.format(interval))
+    time.sleep(interval)
+    while True:
+        logging.info('Reloading DistroBaker configuration.')
+        if distrobaker.load_config(config) is None:
+            logging.error('Failed to reload configuration.  Attempting again in {} seconds.'.format(interval_fail))
+            time.sleep(interval_fail)
+        else:
+            logging.info('DistroBaker configuration reloaded.  Reloading again in {} seconds.'.format(interval))
+            time.sleep(interval)
+
+def listen():
+    logging.info('Listening for messages.')
+    fedora_messaging.api.consume(distrobaker.process_message)
+    logging.critical('Messege bus connection lost.')
 
 def main():
     ap = argparse.ArgumentParser()
@@ -35,13 +55,15 @@ def main():
         logging.critical('Could not load configuration.')
         sys.exit(1)
     logging.info('Configuration loaded.')
+    config = args.config
+    interval = 60 * args.update
     if args.oneshot:
         logging.info('Starting DistroBaker in the oneshot mode.')
         # XXX: Only handling rpms at the moment
         logging.warning('Modules currently not implemented and will be ignored.')
         for ns in ('rpms', ):
             logging.info('Processing components in the {} namespace.'.format(ns))
-            for comp in distrobaker.get_config()['comps'][ns]:
+            for comp in sorted(distrobaker.get_config()['comps'][ns].keys(), key=str.lower):
                 ref = distrobaker.sync_repo(comp, ns=ns, dry_run=args.dry_run)
                 if ref is not None:
                     build = distrobaker.build_comp(comp, ref, ns=ns, dry_run=args.dry_run)
@@ -55,7 +77,10 @@ def main():
     else:
         logging.info('Starting DistroBaker in the service mode.')
         distrobaker._messaging_dry_run = args.dry_run
-        fedora_messaging.api.consume(distrobaker.process_message)
+        threading.Thread(target=update, args=(args.config, args.update * 60)).start()
+        thread = threading.Thread(target=listen)
+        thread.start()
+        thread.join()
         logging.critical('Failed connecting to the message bus, exiting.')
 
 if __name__ == "__main__":
