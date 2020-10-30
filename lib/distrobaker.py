@@ -36,8 +36,9 @@ def load_config(crepo):
     for attempt in range(retry):
         try:
             git.Repo.clone_from(scm['url'], cdir.name).git.checkout(scm['ref'])
-        except:
+        except Exception as e:
             logging.warning('Failed to fetch configuration, retrying (#{}).'.format(attempt + 1))
+            logging.error('EXCEPTION: ' + str(e))
             continue
         else:
             logging.info('Configuration fetched successfully.')
@@ -51,8 +52,9 @@ def load_config(crepo):
             with open(os.path.join(cdir.name, 'distrobaker.yaml')) as f:
                 y = yaml.safe_load(f)
             logging.debug('{} loaded, processing.'.format(os.path.join(cdir.name, 'distrobaker.yaml')))
-        except:
+        except Exception as e:
             logging.error('Could not parse distrobaker.yaml.')
+            logging.error('EXCEPTION: ' + str(e))
             return None
     else:
         logging.error('Configuration repository does not contain distrobaker.yaml.')
@@ -192,8 +194,9 @@ def sync_repo(comp, ns='rpms', dry_run=False):
     for attempt in range(retry):
         try:
             repo = git.Repo.clone_from(dscm['url'], tempdir.name, branch=dscm['ref'])
-        except:
+        except Exception as e:
             logging.warning('Cloning attempt #{}/{} failed, retrying.'.format(attempt + 1, retry))
+            logging.error('EXCEPTION: ' + str(e))
             continue
         else:
             break
@@ -206,8 +209,9 @@ def sync_repo(comp, ns='rpms', dry_run=False):
     for attempt in range(retry):
         try:
             repo.git.fetch('source', sscm['ref'])
-        except:
+        except Exception as e:
             logging.warning('Fetching upstream attempt #{}/{} failed, retrying.'.format(attempt + 1, retry))
+            logging.error('EXCEPTION: ' + str(e))
             continue
         else:
             break
@@ -219,8 +223,9 @@ def sync_repo(comp, ns='rpms', dry_run=False):
     try:
         repo.git.config('user.name', c['main']['git']['author'])
         repo.git.config('user.email', c['main']['git']['email'])
-    except:
+    except Exception as e:
         logging.error('Failed configuring the git repository while processing {}/{}, skipping.'.format(ns, comp))
+        logging.error('EXCEPTION: ' + str(e))
         return None
     if c['main']['control']['merge']:
         logging.debug('Attempting to synchronize the {}/{} branches using the merge mechanism.'.format(ns, comp))
@@ -238,16 +243,18 @@ def sync_repo(comp, ns='rpms', dry_run=False):
             with open(msgfile.name, 'w') as f:
                 f.write(msg)
             repo.git.commit('--author', actor, '--allow-empty', '-F', msgfile.name)
-        except:
+        except Exception as e:
             logging.error('Failed to merge {}/{}, skipping.'.format(ns, comp))
+            logging.error('Failed to merge EXCEPTION: ' + str(e))
             return None
         logging.debug('Successfully merged {}/{} with upstream.'.format(ns, comp))
     else:
         logging.debug('Attempting to synchronize the {}/{} branches using the clean pull mechanism.'.format(ns, comp))
         try:
             repo.git.pull('--ff-only', 'source', sscm['ref'])
-        except:
+        except Exception as e:
             logging.error('Failed to perform a clean pull for {}/{}, skipping.'.format(ns, comp))
+            logging.error('EXCEPTION: ' + str(e))
             return None
         logging.debug('Successfully pulled {}/{} from upstream.'.format(ns, comp))
     logging.debug('Component {}/{} successfully synchronized.'.format(ns, comp))
@@ -269,8 +276,9 @@ def sync_repo(comp, ns='rpms', dry_run=False):
                 logging.debug('Pushing {}/{} (--dry-run).'.format(ns, comp))
                 repo.git.push('--dry-run', '--set-upstream', 'origin', dscm['ref'])
                 logging.debug('Successfully pushed {}/{} (--dry-run).'.format(ns, comp))
-        except:
+        except Exception as e:
             logging.warning('Pushing attempt #{}/{} failed, retrying.'.format(attempt + 1, retry))
+            logging.error('EXCEPTION: ' + str(e))
             continue
         else:
             break
@@ -295,8 +303,9 @@ def sync_cache(comp, sources, ns='rpms', dry_run=False):
                 rec = rec.groupdict()
                 logging.debug('Found lookaside cache sources for {}/{}: {} ({}).'.format(ns, comp, rec['file'], rec['hash']))
                 sums[rec['file']] = rec['hash']
-    except:
+    except Exception as e:
         logging.error('Failed processing lookaside cache sources for {}/{}.'.format(ns, comp))
+        logging.error('EXCEPTION: ' + str(e))
         return None
     scache = pyrpkg.lookaside.CGILookasideCache('sha512', c['main']['source']['cache']['url'], c['main']['source']['cache']['cgi'])
     scache.download_path = c['main']['source']['cache']['path']
@@ -321,8 +330,9 @@ def sync_cache(comp, sources, ns='rpms', dry_run=False):
                         logging.debug('Running in dry run mode, not uploading {} for {}/{}.'.format(f, ns, comp))
                 else:
                     logging.debug('File {} for {}/{} already uploaded, skipping.'.format(f, ns, comp))
-            except:
+            except Exception as e:
                 logging.warning('Failed attempt #{}/{} handling {} for {}/{}, retrying.'.format(attempt + 1, retry, f, ns, comp))
+                logging.error('EXCEPTION: ' + str(e))
             else:
                 break
         else:
@@ -336,14 +346,16 @@ def build_comp(comp, ref, ns='rpms', dry_run=False):
     if ns == 'rpms':
         try:
             buildconf = koji.read_config(profile_name=c['main']['build']['profile'])
-        except:
+        except Exception as e:
             logging.error('Failed initializing koji with the {} profile while building {}/{}, skipping.'.format(c['main']['build']['profile'], ns, comp))
+            logging.error('EXCEPTION: ' + str(e))
             return None
         buildsys = koji.ClientSession(buildconf['server'], opts=buildconf)
         try:
             buildsys.gssapi_login()
-        except:
+        except Exception as e:
             logging.error('Failed authenticating against koji while building {}/{}, skipping.'.format(ns, comp))
+            logging.error('EXCEPTION: ' + str(e))
             return None
         try:
             if not dry_run:
@@ -353,8 +365,9 @@ def build_comp(comp, ref, ns='rpms', dry_run=False):
             else:
                 logging.info('Running in the dry mode, not submitting any builds for {}/{} ({}/{}/{}#{}).'.format(ns, comp, c['main']['build']['prefix'], ns, comp, ref))
                 return 0
-        except:
+        except Exception as e:
             logging.error('Failed submitting build for {}/{} ({}/{}/{}#{}).'.format(ns, comp, c['main']['build']['prefix'], ns, comp, ref))
+            logging.error('EXCEPTION: ' + str(e))
             return None
     elif ns == 'modules':
         logging.critical('Cannot build {}/{}; module building not implemented.'.format(ns, comp))
@@ -374,8 +387,9 @@ def process_message(msg):
             comp = msg.body['name']
             tag = msg.body['tag']
             logging.debug('Tagging event for {}, tag {} received.'.format(comp, tag))
-        except:
+        except Exception as e:
             logging.error('Failed to process the message: {}'.format(msg))
+            logging.error('EXCEPTION: ' + str(e))
         if tag == c['main']['trigger']['rpms']:
             logging.debug('Message tag configured as an RPM trigger, processing.')
             if comp in c['comps']['rpms']:
