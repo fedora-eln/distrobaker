@@ -58,7 +58,7 @@ def main():
             logging.critical('Selecting components only works with oneshot mode.')
             sys.exit(128)
         else:
-            compre = regex.compile(r'^(?<ns>rpms|modules)/(?<comp>[A-Za-z0-9_-]+)$')
+            compre = regex.compile(r'^(?<ns>rpms|modules)/(?<comp>[A-Za-z0-9_.-]+)$')
             for sel in regex.split(r'\s+', args.select):
                 m = compre.match(sel)
                 if m is None:
