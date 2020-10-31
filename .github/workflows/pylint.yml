@@ -21,4 +21,4 @@ jobs:
       run: python -m pip install --upgrade pip setuptools pylint pylint-exit
 
     - name: Run Pylint Checks
-      run: pylint --rcfile=.pylintrc *.py distrobaker/*.py || pylint-exit --error-fail $?
+      run: pylint --rcfile=.pylintrc distrobaker lib/*.py || pylint-exit --error-fail $?
