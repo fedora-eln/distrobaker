@@ -19,30 +19,32 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), 'lib'))
 import distrobaker
 
-def update(config, interval):
+def update(config, interval, logger):
     interval_fail = 60
-    logging.info('Reloading DistroBaker configuration in {} seconds.'.format(interval))
+    logger.info('Reloading DistroBaker configuration in {} seconds.'.format(interval))
     time.sleep(interval)
     while True:
-        logging.info('Reloading DistroBaker configuration.')
+        logger.info('Reloading DistroBaker configuration.')
         if distrobaker.load_config(config) is None:
-            logging.error('Failed to reload configuration.  Attempting again in {} seconds.'.format(interval_fail))
+            logger.error('Failed to reload configuration.  Attempting again in {} seconds.'.format(interval_fail))
             time.sleep(interval_fail)
         else:
-            logging.info('DistroBaker configuration reloaded.  Reloading again in {} seconds.'.format(interval))
+            logger.info('DistroBaker configuration reloaded.  Reloading again in {} seconds.'.format(interval))
             time.sleep(interval)
 
-def listen():
-    logging.info('Listening for messages.')
+def listen(logger):
+    logger.info('Listening for messages.')
     fedora_messaging.api.consume(distrobaker.process_message)
-    logging.critical('Messege bus connection lost.')
+    logger.critical('Messege bus connection lost.')
 
 def main():
+    logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s')
+    logger = logging.getLogger(__name__)
     ap = argparse.ArgumentParser()
     ap.add_argument('config', help='configuration repository SCMURL')
     ap.add_argument('-l', '--loglevel', dest='loglevel', help='logging level; default: info', default='INFO')
     ap.add_argument('-u', '--update', dest='update', type=int, help='configuration refresh interval in minutes; default: 15', default=15)
-    ap.add_argument('-r', '--retry', dest='retry', type=int, help='number of retries on network failures; default: 5', default=5)
+    ap.add_argument('-r', '--retry', dest='retry', type=int, help='number of retries on network failures; default: 3', default=3)
     ap.add_argument('-1', '--oneshot', action='store_true', help='sync all components and exit', default=False)
     ap.add_argument('-d', '-n', '--dry-run', dest='dry_run', action='store_true', help='do not upload, push or build anything', default=False)
     ap.add_argument('-s', '--select', dest='select', help='space-separated list of configured components to sync in the ns/component form; defaults to all')
@@ -51,69 +53,70 @@ def main():
     if not isinstance(loglevel, int):
         print('Invalid loglevel: {}'.format(args.loglevel))
         sys.exit(1)
-    logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=loglevel)
+    logger.setLevel(loglevel)
+    distrobaker.loglevel(loglevel)
+    distrobaker.retries(args.retry)
+    distrobaker.pretend(args.dry_run)
     comps = dict()
     if args.select:
         if not args.oneshot:
-            logging.critical('Selecting components only works with oneshot mode.')
+            logger.critical('Selecting components only works with oneshot mode.')
             sys.exit(128)
         else:
             compre = regex.compile(r'^(?<ns>rpms|modules)/(?<comp>[A-Za-z0-9_.-]+)$')
             for sel in regex.split(r'\s+', args.select):
                 m = compre.match(sel)
                 if m is None:
-                    logging.critical('Selected component "{}" not understood, aborting.'.format(sel))
+                    logger.critical('Selected component "{}" not understood, aborting.'.format(sel))
                     sys.exit(128)
                 m = m.groupdict()
                 if m['ns'] not in comps:
                     comps[m['ns']] = list()
                 comps[m['ns']].append(m['comp'])
         if not comps:
-            logging.critical('No components selected, aborting.')
+            logger.critical('No components selected, aborting.')
             sys.exit(128)
-    distrobaker.retry = args.retry
     if distrobaker.load_config(args.config) is None:
-        logging.critical('Could not load configuration.')
+        logger.critical('Could not load configuration.')
         sys.exit(1)
-    logging.info('Configuration loaded.')
+    logger.info('Configuration loaded.')
     if args.oneshot:
-        logging.info('Starting DistroBaker in the oneshot mode.')
+        logger.info('Starting DistroBaker in the oneshot mode.')
         # XXX: Only handling rpms at the moment
-        logging.warning('Modules currently not implemented and will be ignored.')
+        logger.warning('Modules currently not implemented and will be ignored.')
         for ns in ('rpms', ):
-            logging.info('Processing components in the {} namespace.'.format(ns))
+            logger.info('Processing components in the {} namespace.'.format(ns))
             if not comps:
                 if ns in distrobaker.get_config()['comps']:
                     comps[ns] = distrobaker.get_config()['comps'][ns].keys()
                 else:
-                    logging.info('No components configured in this namespace.')
+                    logger.info('No components configured in this namespace.')
                     continue
             else:
                 if ns not in comps:
-                    logging.info('No components selected in this namespace.')
+                    logger.info('No components selected in this namespace.')
                     continue
             for comp in sorted(comps[ns], key=str.lower):
                 if ns not in distrobaker.get_config()['comps'] or comp not in distrobaker.get_config()['comps'][ns]:
-                    logging.warning('Selected component "{}/{}" not configured, skipping.'.format(ns, comp))
+                    logger.warning('Selected component "{}/{}" not configured, skipping.'.format(ns, comp))
                     continue
-                ref = distrobaker.sync_repo(comp, ns=ns, dry_run=args.dry_run)
+                ref = distrobaker.sync_repo(comp, ns=ns)
                 if ref is not None:
-                    build = distrobaker.build_comp(comp, ref, ns=ns, dry_run=args.dry_run)
+                    build = distrobaker.build_comp(comp, ref, ns=ns)
                     if build is not None:
-                        logging.info('Build for {}/{} submitted: {}'.format(ns, comp, build))
+                        logger.info('Build for {}/{} submitted: {}'.format(ns, comp, build))
                     else:
-                        logging.error('Failed to submit a build for {}/{}.'.format(ns, comp))
+                        logger.error('Failed to submit a build for {}/{}.'.format(ns, comp))
                 else:
-                    logging.error('Failed to sync {}/{}, not attempting to build anything.'.format(ns, comp))
-        logging.info('All components processed, exiting.')
+                    logger.error('Failed to sync {}/{}, not attempting to build anything.'.format(ns, comp))
+        logger.info('All components processed, exiting.')
     else:
-        logging.info('Starting DistroBaker in the service mode.')
-        distrobaker._messaging_dry_run = args.dry_run
-        threading.Thread(target=update, args=(args.config, args.update * 60)).start()
-        thread = threading.Thread(target=listen)
+        logger.info('Starting DistroBaker in the service mode.')
+        threading.Thread(target=update, args=(args.config, args.update * 60, logger)).start()
+        thread = threading.Thread(target=listen, args=(logger, ))
         thread.start()
         thread.join()
-        logging.critical('Failed connecting to the message bus, exiting.')
+        logger.critical('Failed connecting to the message bus, exiting.')
 
 if __name__ == "__main__":
     main()
