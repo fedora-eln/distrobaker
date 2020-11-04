@@ -20,6 +20,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), 'li
 import distrobaker
 
 def update(config, interval, logger):
+    """Update the instance configuration.
+
+    :param config: Link to the configuration in the `link#branch` format
+    :param interval: Interval for configuration reloads in seconds
+    :param logger: The logger to use
+    :returns: None
+    """
     interval_fail = 60
     logger.info('Reloading DistroBaker configuration in {} seconds.'.format(interval))
     time.sleep(interval)
@@ -33,9 +40,23 @@ def update(config, interval, logger):
             time.sleep(interval)
 
 def listen(logger):
+    """Start listening for fedora messaging bus style messages.
+
+    :param logger: The logger to use
+    :returns: None
+    """
     logger.info('Listening for messages.')
     fedora_messaging.api.consume(distrobaker.process_message)
     logger.critical('Messege bus connection lost.')
+
+def chew(compset, logger):
+    """Process a set of components in one go and exit.
+
+    :param compset: The set of components to process in the `namespace/component` format
+    :param logger: The logger to use
+    :returns: None
+    """
+    distrobaker.process_components(compset)
 
 def main():
     logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s')
@@ -57,58 +78,17 @@ def main():
     distrobaker.loglevel(loglevel)
     distrobaker.retries(args.retry)
     distrobaker.pretend(args.dry_run)
-    comps = dict()
-    if args.select:
-        if not args.oneshot:
-            logger.critical('Selecting components only works with oneshot mode.')
-            sys.exit(128)
-        else:
-            compre = regex.compile(r'^(?<ns>rpms|modules)/(?<comp>[A-Za-z0-9_.-]+)$')
-            for sel in regex.split(r'\s+', args.select):
-                m = compre.match(sel)
-                if m is None:
-                    logger.critical('Selected component "{}" not understood, aborting.'.format(sel))
-                    sys.exit(128)
-                m = m.groupdict()
-                if m['ns'] not in comps:
-                    comps[m['ns']] = list()
-                comps[m['ns']].append(m['comp'])
-        if not comps:
-            logger.critical('No components selected, aborting.')
-            sys.exit(128)
+    if args.select and not args.oneshot:
+        logger.critical('Selecting components only works with oneshot mode.')
+        sys.exit(1)
     if distrobaker.load_config(args.config) is None:
         logger.critical('Could not load configuration.')
-        sys.exit(1)
+        sys.exit(128)
     logger.info('Configuration loaded.')
     if args.oneshot:
         logger.info('Starting DistroBaker in the oneshot mode.')
-        # XXX: Only handling rpms at the moment
         logger.warning('Modules currently not implemented and will be ignored.')
-        for ns in ('rpms', ):
-            logger.info('Processing components in the {} namespace.'.format(ns))
-            if not comps:
-                if ns in distrobaker.get_config()['comps']:
-                    comps[ns] = distrobaker.get_config()['comps'][ns].keys()
-                else:
-                    logger.info('No components configured in this namespace.')
-                    continue
-            else:
-                if ns not in comps:
-                    logger.info('No components selected in this namespace.')
-                    continue
-            for comp in sorted(comps[ns], key=str.lower):
-                if ns not in distrobaker.get_config()['comps'] or comp not in distrobaker.get_config()['comps'][ns]:
-                    logger.warning('Selected component "{}/{}" not configured, skipping.'.format(ns, comp))
-                    continue
-                ref = distrobaker.sync_repo(comp, ns=ns)
-                if ref is not None:
-                    build = distrobaker.build_comp(comp, ref, ns=ns)
-                    if build is not None:
-                        logger.info('Build for {}/{} submitted: {}'.format(ns, comp, build))
-                    else:
-                        logger.error('Failed to submit a build for {}/{}.'.format(ns, comp))
-                else:
-                    logger.error('Failed to sync {}/{}, not attempting to build anything.'.format(ns, comp))
+        chew(set(regex.split(r'\s+', args.select)) if args.select else set(), logger)
         logger.info('All components processed, exiting.')
     else:
         logger.info('Starting DistroBaker in the service mode.')
