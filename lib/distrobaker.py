@@ -24,7 +24,7 @@ dry_run = False
 sre = regex.compile(r'^(?>(?P<hash>[a-f0-9]{32})  (?P<file>.+)|SHA512 \((?P<file>.+)\) = (?<hash>[a-f0-9]{128}))$')
 
 # Matching the namespace/component text format
-cre = regex.compile(r'^(?P<namespace>rpms|modules)/(?P<component>[A-Za-z0-9:._-]+)$')
+cre = regex.compile(r'^(?P<namespace>rpms|modules)/(?P<component>[A-Za-z0-9:._+-]+)$')
 
 def loglevel(val=None):
     """Gets or, optionally, sets the logging level of the module.
