@@ -121,7 +121,6 @@ def load_config(crepo):
     else:
         logger.error('Failed to fetch configuration, giving up.')
         return None
-    # Try to load yaml
     if os.path.isfile(os.path.join(cdir.name, 'distrobaker.yaml')):
         try:
             with open(os.path.join(cdir.name, 'distrobaker.yaml')) as f:
@@ -175,8 +174,7 @@ def load_config(crepo):
                 if k in cnf['trigger']:
                     n['trigger'][k] = str(cnf['trigger'][k])
                 else:
-                    # Triggers aren't strictly required for oneshot; or if the relevant components are not configured.
-                    logger.warning('Configuration warning: no trigger configured for {}.'.format(k))
+                    logger.error('Configuration error: trigger.{} missing.'.format(k))
         else:
             logger.error('Configuration error: trigger missing.')
             return None
@@ -259,7 +257,7 @@ def load_config(crepo):
                 for p in cnf[k].keys():
                     components += 1
                     nc[k][p] = dict()
-                    # TODO: Modules and their streams -- split the name by colon
+                    # FIXME: Modules and their streams -- split the name by colon
                     nc[k][p]['source'] = n['defaults'][k]['source'] % { 'component': p }
                     nc[k][p]['destination'] = n['defaults'][k]['destination'] % { 'component': p }
                     nc[k][p]['cache'] = {
@@ -276,6 +274,10 @@ def load_config(crepo):
                             if ck in cnf[k][p]['cache']:
                                 nc[k][p]['cache'][ck] = str(cnf[k][p]['cache'][ck])
             logger.info('Found {} configured component(s) in the {} namespace.'.format(len(nc[k]), k))
+    if n['control']['strict']:
+        logger.info('Running in the strict mode.  Only configured components will be processed.')
+    else:
+        logger.info('Running in the non-strict mode.  All trigger components will be processed.')
     if not components:
         if n['control']['strict']:
             logger.warning('No components configured while running in the strict mode.  Nothing to do.')
