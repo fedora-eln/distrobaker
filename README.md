@@ -37,12 +37,15 @@ pulls, cache downloads and uploads and pushes; defaults to 5.
 configured components and resyncing.  Useful for bootstrapping; defaults to
 false, where DistroBaker runs in a service mode listening for tagging messages.
 
+With `strict: false`, DistroBaker queries the respective trigger tags for the
+list of components.
+
 `-d`, `-n` or `--dry-run` runs DistroBaker in a dry-run mode where all
 potentially destructive operations are skipped.  This includes cache uploads,
 SCM pushes and component builds; defaults to non-pretend mode.
 
 `-s` or `--select` limits the component set to the specified space-separated
-list of components in the `ns/component` form.  Components must be configured.
+list of components in the `ns/component` form.
 
 ### Examples
 
