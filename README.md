@@ -282,7 +282,7 @@ The `build` property controls whether builds get submitted.
 The `merge` property controls whether DistroBaker attempts to do clean fast
 forward pulls (`false`) or squashed merges (`true`).
 
-The `eclude` block is split into namespaces, `rpms` and `modules`.  Both
+The `exclude` block is split into namespaces, `rpms` and `modules`.  Both
 the block and the namespaces are optional.  If provided, DistroBaker will
 refuse to sync the listed components in all cases.
 
