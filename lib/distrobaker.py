@@ -80,13 +80,20 @@ def split_scmurl(scmurl):
     generic, many code paths in DistroBaker expect these to be branch names.
     `link` forms are also accepted, in which case the returned `ref` is None.
 
+    It also attempts to extract the namespace and component, where applicable.
+    These can only be detected if the link matches the standard dist-git
+    pattern; in other cases the results may be bogus or None.
+
     :param scmurl: A link#ref style URL, with #ref being optional
-    :returns: A dictionary with `link` and `ref` keys
+    :returns: A dictionary with `link`, `ref`, `ns` and `comp` keys
     """
     scm = scmurl.split('#', 1)
+    nscomp = scm[0].split('/')
     return {
         'link': scm[0],
-        'ref': scm[1] if len(scm) >= 2 else None
+        'ref': scm[1] if len(scm) >= 2 else None,
+        'ns': nscomp[-2] if len(nscomp) >= 2 else None,
+        'comp': nscomp[-1] if len(nscomp) else None,
     }
 
 # FIXME: This needs even more error checking, e.g.
@@ -522,7 +529,6 @@ def sync_cache(comp, sources, ns='rpms'):
             return None
     return sums
 
-# FIXME: Don't build comp, the package might have a different name.  Get it from SCM.
 def build_comp(comp, ref, ns='rpms'):
     """Submits a build for the requested component.  Requires the
     component name, namespace and the destination SCM reference to build.
@@ -545,13 +551,16 @@ def build_comp(comp, ref, ns='rpms'):
     logger.info('Processing build for {}/{}.'.format(ns, comp))
     if ns == 'rpms':
         bsys = get_buildsys('destination')
+        buildcomp = comp
+        if comp in c['comps'][ns]:
+            buildcomp = split_scmurl(c['comps'][ns][comp]['destination'])['comp']
         try:
             if not dry_run:
-                task = bsys.build('{}/{}/{}#{}'.format(c['main']['build']['prefix'], ns, comp, ref), c['main']['build']['target'], { 'scratch': c['main']['build']['scratch'] })
-                logger.debug('Build submitted for {}/{}; task {}; SCMURL: {}/{}/{}#{}.'.format(ns, comp, task, c['main']['build']['prefix'], ns, comp, ref))
+                task = bsys.build('{}/{}/{}#{}'.format(c['main']['build']['prefix'], ns, buildcomp, ref), c['main']['build']['target'], { 'scratch': c['main']['build']['scratch'] })
+                logger.debug('Build submitted for {}/{}; task {}; SCMURL: {}/{}/{}#{}.'.format(ns, comp, task, c['main']['build']['prefix'], ns, buildcomp, ref))
                 return task
             else:
-                logger.info('Running in the dry mode, not submitting any builds for {}/{} ({}/{}/{}#{}).'.format(ns, comp, c['main']['build']['prefix'], ns, comp, ref))
+                logger.info('Running in the dry mode, not submitting any builds for {}/{} ({}/{}/{}#{}).'.format(ns, comp, c['main']['build']['prefix'], ns, buildcomp, ref))
                 return 0
         except Exception as e:
             logger.error('Failed submitting build for {}/{} ({}/{}/{}#{}).'.format(ns, comp, c['main']['build']['prefix'], ns, comp, ref))
