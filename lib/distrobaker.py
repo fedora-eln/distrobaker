@@ -4,7 +4,9 @@ import koji
 import logging
 import os
 import pyrpkg
+import random
 import regex
+import string
 import tempfile
 import yaml
 
@@ -375,15 +377,27 @@ def sync_repo(comp, ns='rpms', nvr=None):
         return None
     if c['main']['control']['merge']:
         logger.debug('Attempting to synchronize the {}/{} branches using the merge mechanism.'.format(ns, comp))
-        # FIXME: Generate a random branch name for the temporary branch in switch
+        logger.debug('Generating a temporary merge branch name for {}/{}.'.format(ns, comp))
+        for attempt in range(retry):
+            bname = ''.join(random.choice(string.ascii_letters) for i in range(16))
+            logger.debug('Checking the availability of {}/{}#{}.'.format(ns, comp, bname))
+            try:
+                repo.git.rev_parse('--quiet', bname, '--')
+                logger.debug('{}/{}#{} is taken.  Some people choose really weird branch names.  Retrying, attempt #{}/{}.'.format(ns, comp, bname, attempt + 1, retry))
+            except:
+                logger.debug('Using {}/{}#{} as the temporary merge branch name.'.format(ns, comp, bname))
+                break
+        else:
+            logger.error('Exhausted attempts finding an unused branch name while synchronizing {}/{}; this is very rare, congratulations.  Skipping.'.format(ns, comp))
+            return None
         try:
             actor = '{} <{}>'.format(c['main']['git']['author'], c['main']['git']['email'])
             repo.git.checkout(bscm['ref'])
-            repo.git.switch('-c', 'source')
+            repo.git.switch('-c', bname)
             repo.git.merge('--allow-unrelated-histories', '--no-commit', '-s', 'ours', dscm['ref'])
             repo.git.commit('--author', actor, '--allow-empty', '-m', 'Temporary working tree merge')
             repo.git.checkout(dscm['ref'])
-            repo.git.merge('--no-commit', '--squash', 'source')
+            repo.git.merge('--no-commit', '--squash', bname)
             msg = '{}\nSource: {}#{}'.format(c['main']['git']['message'], sscm['link'], bscm['ref'])
             msgfile = tempfile.NamedTemporaryFile(prefix='msg-{}-{}-'.format(ns, comp))
             with open(msgfile.name, 'w') as f:
