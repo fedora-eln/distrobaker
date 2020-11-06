@@ -12,6 +12,7 @@ import fedora_messaging.api
 import logging
 import os
 import regex
+import subprocess
 import sys
 import threading
 import time
@@ -19,7 +20,22 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), 'lib'))
 import distrobaker
 
-def update(config, interval, logger):
+def get_config_ref(config, logger):
+    scm = distrobaker.split_scmurl(config)
+    git = subprocess.run(
+        [
+            'git',
+            'ls-remote',
+            '--heads',
+            scm['link'],
+            scm['ref'],
+        ],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if not git.stdout or git.stderr:
+        return None
+    return str(git.stdout).split(r'\t', 1)[0]
+
+def update(config, interval, ref, logger):
     """Update the instance configuration.
 
     :param config: Link to the configuration in the `link#branch` format
@@ -27,17 +43,22 @@ def update(config, interval, logger):
     :param logger: The logger to use
     :returns: None
     """
-    interval_fail = 60
-    logger.info('Reloading DistroBaker configuration in {} seconds.'.format(interval))
-    time.sleep(interval)
+    logger.debug('Reloading DistroBaker configuration in {} seconds.'.format(interval))
     while True:
-        logger.info('Reloading DistroBaker configuration.')
+        time.sleep(interval)
+        nref = get_config_ref(config, logger)
+        if nref is None:
+            logger.warning('The configuration repository is unavailable, skipping update.  Checking again in {} seconds.'.format(interval))
+            continue
+        if nref == ref:
+            logger.debug('Configuration not changed, skipping update.  Checking again in {} seconds.'.format(interval))
+            continue
+        ref = nref
+        logger.debug('Reloading DistroBaker configuration.')
         if distrobaker.load_config(config) is None:
-            logger.error('Failed to reload configuration.  Attempting again in {} seconds.'.format(interval_fail))
-            time.sleep(interval_fail)
+            logger.error('Failed to reload configuration.  Attempting again in {} seconds.'.format(interval))
         else:
             logger.info('DistroBaker configuration reloaded.  Reloading again in {} seconds.'.format(interval))
-            time.sleep(interval)
 
 def listen(logger):
     """Start listening for fedora messaging bus style messages.
@@ -64,7 +85,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('config', help='configuration repository SCMURL')
     ap.add_argument('-l', '--loglevel', dest='loglevel', help='logging level; default: info', default='INFO')
-    ap.add_argument('-u', '--update', dest='update', type=int, help='configuration refresh interval in minutes; default: 15', default=15)
+    ap.add_argument('-u', '--update', dest='update', type=int, help='configuration refresh interval in minutes; default: 5', default=5)
     ap.add_argument('-r', '--retry', dest='retry', type=int, help='number of retries on network failures; default: 3', default=3)
     ap.add_argument('-1', '--oneshot', action='store_true', help='sync all components and exit', default=False)
     ap.add_argument('-d', '-n', '--dry-run', dest='dry_run', action='store_true', help='do not upload, push or build anything', default=False)
@@ -81,6 +102,10 @@ def main():
     if args.select and not args.oneshot:
         logger.critical('Selecting components only works with oneshot mode.')
         sys.exit(1)
+    configref = get_config_ref(args.config, logger)
+    if configref is None:
+        logger.critical('The configuration repository is unavailable, cannot continue, exiting.')
+        sys.exit(128)
     if distrobaker.load_config(args.config) is None:
         logger.critical('Could not load configuration.')
         sys.exit(128)
@@ -92,7 +117,7 @@ def main():
         logger.info('All components processed, exiting.')
     else:
         logger.info('Starting DistroBaker in the service mode.')
-        threading.Thread(target=update, args=(args.config, args.update * 60, logger)).start()
+        threading.Thread(target=update, args=(args.config, args.update * 60, configref, logger)).start()
         thread = threading.Thread(target=listen, args=(logger, ))
         thread.start()
         thread.join()

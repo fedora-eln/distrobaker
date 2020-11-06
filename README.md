@@ -28,7 +28,7 @@ be specified using the `url#branch` syntax.
 defaults to `INFO`.
 
 `-u` or `--update` sets the configuration update interval in minutes; defaults
-to 15 minutes.
+to 5 minutes.
 
 `-r` or `--retry` sets the number of retries on failures, such as on clones,
 pulls, cache downloads and uploads and pushes; defaults to 5.
