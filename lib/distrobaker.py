@@ -96,6 +96,20 @@ def split_scmurl(scmurl):
         'comp': nscomp[-1] if len(nscomp) else None,
     }
 
+def split_module(comp):
+    """Splits modules component name into name and stream pair.  Expects the
+    name to be in the `name:stream` format.  Defaults to stream=master if the
+    split fails.
+
+    :param comp: The component name
+    :returns: Dictionary with name and stream
+    """
+    ms = comp.split(':', 1)
+    return {
+        'name': ms[0],
+        'stream': ms[1] if ms[1] else 'master',
+    }
+
 def parse_sources(comp, ns, sources):
     """Parses the supplied source file and generates a set of
     tuples containing the filename, the hash, and the hashtype.
@@ -295,12 +309,17 @@ def load_config(crepo):
                 for p in cnf[k].keys():
                     components += 1
                     nc[k][p] = dict()
-                    # FIXME: Modules and their streams -- split the name by colon
-                    nc[k][p]['source'] = n['defaults'][k]['source'] % { 'component': p }
-                    nc[k][p]['destination'] = n['defaults'][k]['destination'] % { 'component': p }
+                    cname = p
+                    sname = ''
+                    if k == 'modules':
+                        ms = split_module(p)
+                        cname = ms['name']
+                        sname = ms['stream']
+                    nc[k][p]['source'] = n['defaults'][k]['source'] % { 'component': cname, 'stream': sname }
+                    nc[k][p]['destination'] = n['defaults'][k]['destination'] % { 'component': cname, 'stream': sname }
                     nc[k][p]['cache'] = {
-                            'source': n['defaults']['cache']['source'] % { 'component': p },
-                            'destination': n['defaults']['cache']['destination'] % { 'component': p },
+                            'source': n['defaults']['cache']['source'] % { 'component': cname, 'stream': sname },
+                            'destination': n['defaults']['cache']['destination'] % { 'component': cname, 'stream': sname },
                         }
                     if cnf[k][p] is None:
                         cnf[k][p] = dict()
@@ -362,8 +381,14 @@ def sync_repo(comp, ns='rpms', nvr=None):
         csrc = c['comps'][ns][comp]['source']
         cdst = c['comps'][ns][comp]['destination']
     else:
-        csrc = c['main']['defaults'][ns]['source'] % { 'component': comp }
-        cdst = c['main']['defaults'][ns]['destination'] % { 'component': comp }
+        cname = comp
+        sname = ''
+        if ns == 'modules':
+            ms = split_module(comp)
+            cname = ms['name']
+            sname = ms['stream']
+        csrc = c['main']['defaults'][ns]['source'] % { 'component': cname, 'stream': sname }
+        cdst = c['main']['defaults'][ns]['destination'] % { 'component': cname, 'stream': sname }
     sscm = split_scmurl('{}/{}/{}'.format(c['main']['source']['scm'], ns, csrc))
     dscm = split_scmurl('{}/{}/{}'.format(c['main']['destination']['scm'], ns, cdst))
     dscm['ref'] = dscm['ref'] if dscm['ref'] else 'master'
@@ -495,8 +520,6 @@ def sync_repo(comp, ns='rpms', nvr=None):
     logger.info('Successfully synchronized {}/{}.'.format(ns, comp))
     return repo.git.rev_parse('HEAD')
 
-# FIXME: Handle multiple hashes for the same filename.
-#        Perhaps via a list of tuples and a directory structure similar to download_path in tempdir
 def sync_cache(comp, sources, ns='rpms'):
     """Synchronizes lookaside cache contents for the given component.
     Expects a set of (filename, hash, hastype) tuples to synchronize, as
