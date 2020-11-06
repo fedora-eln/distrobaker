@@ -96,6 +96,35 @@ def split_scmurl(scmurl):
         'comp': nscomp[-1] if len(nscomp) else None,
     }
 
+def parse_sources(comp, ns, sources):
+    """Parses the supplied source file and generates a set of
+    tuples containing the filename, the hash, and the hashtype.
+
+    :param comps: The component we are parsing
+    :param ns: The namespace of the component
+    :param sources: The sources file to parse
+    :returns: A set of tuples containing the filename, the hash, and the hashtype, or None on error
+    """
+    src = set()
+    try:
+        if not os.path.isfile(sources):
+            logger.debug('No sources file found for {}/{}.'.format(ns, comp))
+            return set()
+        with open(sources, 'r') as fh:
+            for line in fh:
+                m = sre.match(line.rstrip())
+                if m is None:
+                    logger.error('Cannot parse "{}" from sources of {}/{}.'.format(line, ns, comp))
+                    return None
+                m = m.groupdict()
+                src.add((m['file'], m['hash'], 'sha512' if len(m['hash']) == 128 else 'md5'))
+    except Exception as e:
+        logger.error('Error processing sources of {}/{}.'.format(ns, comp))
+        logger.error('EXCEPTION: ' + str(e))
+        return None
+    logger.debug('Found {} source file(s) for {}/{}.'.format(len(src), ns, comp))
+    return src
+
 # FIXME: This needs even more error checking, e.g.
 #         - check if blocks are actual dictionaries
 #         - check if certain values are what we expect
@@ -382,6 +411,11 @@ def sync_repo(comp, ns='rpms', nvr=None):
         logger.error('Failed configuring the git repository while processing {}/{}, skipping.'.format(ns, comp))
         logger.error('EXCEPTION: ' + str(e))
         return None
+    logger.debug('Gathering destination files for {}/{}.'.format(ns, comp))
+    dsrc = parse_sources(comp, ns, os.path.join(tempdir.name, 'sources'))
+    if dsrc is None:
+        logger.error('Error processing the {}/{} destination sources file, skipping.'.format(ns, comp))
+        return None
     if c['main']['control']['merge']:
         logger.debug('Attempting to synchronize the {}/{} branches using the merge mechanism.'.format(ns, comp))
         logger.debug('Generating a temporary merge branch name for {}/{}.'.format(ns, comp))
@@ -424,14 +458,20 @@ def sync_repo(comp, ns='rpms', nvr=None):
             logger.error('EXCEPTION: ' + str(e))
             return None
         logger.debug('Successfully pulled {}/{} from upstream.'.format(ns, comp))
-    logger.debug('Component {}/{} successfully synchronized.'.format(ns, comp))
-    if os.path.isfile(os.path.join(tempdir.name, 'sources')):
-        logger.debug('Lookaside cache sources for {}/{} found, synchronizing.'.format(ns, comp))
-        if sync_cache(comp, os.path.join(tempdir.name, 'sources'), ns=ns) is not None:
-            logger.debug('Lookaside cache sources for {}/{} synchronized.'.format(ns, comp))
-        else:
-            logger.error('Failed to synchronize lookaside cache sources for {}/{}, skipping.'.format(ns, comp))
+    logger.debug('Gathering source files for {}/{}.'.format(ns, comp))
+    ssrc = parse_sources(comp, ns, os.path.join(tempdir.name, 'sources'))
+    if ssrc is None:
+        logger.error('Error processing the {}/{} source sources file, skipping.'.format(ns, comp))
+        return None
+    srcdiff = ssrc - dsrc
+    if srcdiff:
+        logger.debug('Source files for {}/{} differ.'.format(ns, comp))
+        if sync_cache(comp, srcdiff, ns) is None:
+            logger.error('Failed to synchronize sources for {}/{}, skipping.'.format(ns, comp))
             return None
+    else:
+        logger.debug('Source files for {}/{} are up-to-date.'.format(ns, comp))
+    logger.debug('Component {}/{} successfully synchronized.'.format(ns, comp))
     logger.debug('Pushing synchronized contents for {}/{}.'.format(ns, comp))
     for attempt in range(retry):
         try:
@@ -459,14 +499,13 @@ def sync_repo(comp, ns='rpms', nvr=None):
 #        Perhaps via a list of tuples and a directory structure similar to download_path in tempdir
 def sync_cache(comp, sources, ns='rpms'):
     """Synchronizes lookaside cache contents for the given component.
-    Processes the sources file list, checks if the file is already present
-    in the destination cache; if not, it downloads the file from the
-    source cache and uploads it.  Supports SHA512 and MD5 checksums.
+    Expects a set of (filename, hash, hastype) tuples to synchronize, as
+    returned by parse_sources().
 
     :param comp: The component name
-    :param sources: Path to the sources file
+    :param sources: The set of source tuples
     :param ns: The component namespace
-    :returns: A dictionary of filenames and checksums, or None on error
+    :returns: The number of files processed
     """
     if 'main' not in c:
         logger.critical('DistroBaker is not configured, aborting.')
@@ -474,22 +513,7 @@ def sync_cache(comp, sources, ns='rpms'):
     if comp in c['main']['control']['exclude'][ns]:
         logger.critical('The component {}/{} is excluded from sync, aborting.'.format(ns, comp))
         return None
-    sums = dict()
-    logger.debug('Processing lookaside cache sources for {}/{}.'.format(ns, comp))
-    try:
-        with open(sources) as f:
-            for l in f.readlines():
-                rec = sre.match(l.rstrip())
-                if rec is None:
-                    logger.error('Garbage found in {}/{}:sources, skipping.'.format(ns, comp))
-                    return None
-                rec = rec.groupdict()
-                logger.debug('Found lookaside cache sources for {}/{}: {} ({}).'.format(ns, comp, rec['file'], rec['hash']))
-                sums[rec['file']] = rec['hash']
-    except Exception as e:
-        logger.error('Failed processing lookaside cache sources for {}/{}.'.format(ns, comp))
-        logger.error('EXCEPTION: ' + str(e))
-        return None
+    logger.debug('Synchronizing {} cache file(s) for {}/{}.'.format(len(sources), ns, comp))
     scache = pyrpkg.lookaside.CGILookasideCache('sha512', c['main']['source']['cache']['url'], c['main']['source']['cache']['cgi'])
     scache.download_path = c['main']['source']['cache']['path']
     dcache = pyrpkg.lookaside.CGILookasideCache('sha512', c['main']['destination']['cache']['url'], c['main']['destination']['cache']['cgi'])
@@ -502,32 +526,31 @@ def sync_cache(comp, sources, ns='rpms'):
     else:
         scname = c['main']['defaults']['cache']['source'] % { 'component': comp }
         dcname = c['main']['defaults']['cache']['source'] % { 'component': comp }
-    for f in sums:
-        hashtype = 'sha512' if len(sums[f]) == 128 else 'md5'
+    for s in sources:
         # There's no API for this and .upload doesn't let us override it
-        dcache.hashtype = hashtype
+        dcache.hashtype = s[2]
         for attempt in range(retry):
             try:
-                if not dcache.remote_file_exists('{}/{}'.format(ns, dcname), f, sums[f]):
-                    logger.debug('File {} for {}/{} ({}/{}) not available in the destination cache, downloading.'.format(f, ns, comp, ns, dcname))
-                    scache.download('{}/{}'.format(ns, scname), f, sums[f], os.path.join(tempdir.name, f), hashtype=hashtype)
-                    logger.debug('File {} for {}/{} ({}/{}) successfully downloaded.  Uploading to the destination cache.'.format(f, ns, comp, ns, scname))
+                if not dcache.remote_file_exists('{}/{}'.format(ns, dcname), s[0], s[1]):
+                    logger.debug('File {} for {}/{} ({}/{}) not available in the destination cache, downloading.'.format(s[0], ns, comp, ns, dcname))
+                    scache.download('{}/{}'.format(ns, scname), s[0], s[1], os.path.join(tempdir.name, s[0]), hashtype=s[2])
+                    logger.debug('File {} for {}/{} ({}/{}) successfully downloaded.  Uploading to the destination cache.'.format(s[0], ns, comp, ns, scname))
                     if not dry_run:
-                        dcache.upload('{}/{}'.format(ns, dcname), os.path.join(tempdir.name, f), sums[f])
-                        logger.debug('File {} for {}/{} ({}/{}) )successfully uploaded to the destination cache.'.format(f, ns, comp, ns, dcname))
+                        dcache.upload('{}/{}'.format(ns, dcname), os.path.join(tempdir.name, s[0]), s[1])
+                        logger.debug('File {} for {}/{} ({}/{}) )successfully uploaded to the destination cache.'.format(s[0], ns, comp, ns, dcname))
                     else:
-                        logger.debug('Running in dry run mode, not uploading {} for {}/{}.'.format(f, ns, comp))
+                        logger.debug('Running in dry run mode, not uploading {} for {}/{}.'.format(s[0], ns, comp))
                 else:
-                    logger.debug('File {} for {}/{} ({}/{}) already uploaded, skipping.'.format(f, ns, comp, ns, dcname))
+                    logger.debug('File {} for {}/{} ({}/{}) already uploaded, skipping.'.format(s[0], ns, comp, ns, dcname))
             except Exception as e:
-                logger.warning('Failed attempt #{}/{} handling {} for {}/{} ({}/{} -> {}/{}), retrying.'.format(attempt + 1, retry, f, ns, comp, ns, scname, ns, dcname))
+                logger.warning('Failed attempt #{}/{} handling {} for {}/{} ({}/{} -> {}/{}), retrying.'.format(attempt + 1, retry, s[0], ns, comp, ns, scname, ns, dcname))
                 logger.error('EXCEPTION: ' + str(e))
             else:
                 break
         else:
-            logger.error('Exhausted lookaside cache synchronization attempts for {}/{} while working on {}, skipping.'.format(ns, comp, f))
+            logger.error('Exhausted lookaside cache synchronization attempts for {}/{} while working on {}, skipping.'.format(ns, comp, s[0]))
             return None
-    return sums
+    return len(sources)
 
 def build_comp(comp, ref, ns='rpms'):
     """Submits a build for the requested component.  Requires the
