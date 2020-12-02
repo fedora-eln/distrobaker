@@ -8,19 +8,30 @@
 #
 
 import argparse
-import fedora_messaging.api
 import logging
 import os
-import regex
 import subprocess
 import sys
 import threading
 import time
 
+import fedora_messaging.api
+import regex
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), 'lib'))
 import distrobaker
 
 def get_config_ref(config, logger):
+    """Gets the ref for the config SCMURL
+
+    Returns the actual ref for a symbolic ref possibly used in the
+    config SCMURL.  Used by the update function to check whether the
+    config should be resync'd.
+
+    :param config: Config SCMURL
+    :param logger: The logger
+    :returns: Remote ref or None on error
+    """
     scm = distrobaker.split_scmurl(config)
     git = subprocess.run(
         [
@@ -43,15 +54,15 @@ def update(config, interval, ref, logger):
     :param logger: The logger to use
     :returns: None
     """
-    logger.debug('Reloading DistroBaker configuration in {} seconds.'.format(interval))
+    logger.debug('Reloading DistroBaker configuration in %d seconds.', interval)
     while True:
         time.sleep(interval)
         nref = get_config_ref(config, logger)
         if nref is None:
-            logger.warning('The configuration repository is unavailable, skipping update.  Checking again in {} seconds.'.format(interval))
+            logger.warning('The configuration repository is unavailable, skipping update.  Checking again in %d seconds.', interval)
             continue
         if nref == ref:
-            logger.debug('Configuration not changed, skipping update.  Checking again in {} seconds.'.format(interval))
+            logger.debug('Configuration not changed, skipping update.  Checking again in %d seconds.', interval)
             continue
         ref = nref
         logger.debug('Reloading DistroBaker configuration.')
