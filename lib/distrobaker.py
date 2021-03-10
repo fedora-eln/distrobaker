@@ -106,10 +106,10 @@ def split_module(comp):
     :param comp: The component name
     :returns: Dictionary with name and stream
     """
-    ms = comp.split(':', 1)
+    ms = comp.split(':')
     return {
         'name': ms[0],
-        'stream': ms[1] if ms[1] else 'master',
+        'stream': ms[1] if len(ms) > 1 and ms[1] else 'master',
     }
 
 def parse_sources(comp, ns, sources):
