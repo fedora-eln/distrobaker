@@ -791,7 +791,7 @@ def get_buildsys(which):
     if 'main' not in c:
         logger.critical('DistroBaker is not configured, aborting.')
         return None
-    if which != 'source' and which != 'destination':
+    if which not in ('source', 'destination'):
         logger.error('Cannot get "%s" build system.', which)
         return None
     if not hasattr(get_buildsys, which):
