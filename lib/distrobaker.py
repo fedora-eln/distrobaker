@@ -677,6 +677,7 @@ def process_message(msg):
             logger.debug('Message tag not configured as a trigger, ignoring.')
     else:
         logger.warning('Unable to handle %s topics, ignoring.', msg.topic)
+    return None
 
 def process_components(compset):
     """Processes the supplied set of components.  If the set is empty,
@@ -720,6 +721,7 @@ def process_components(compset):
         logger.info('Done processing %s.', rec)
         processed += 1
     logger.info('Synchronized %d component(s), %d skipped.', processed, len(compset) - processed)
+    return None
 
 def get_scmurl(nvr):
     """Get SCMURL for a source build system build NVR.  NVRs are unique.
