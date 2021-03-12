@@ -44,7 +44,7 @@ def get_config_ref(config, logger):
         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if not git.stdout or git.stderr:
         return None
-    return str(git.stdout).split(r'\t', 1)[0]
+    return git.stdout.split(b'\t', 1)[0]
 
 def update(config, interval, ref, logger):
     """Update the instance configuration.
