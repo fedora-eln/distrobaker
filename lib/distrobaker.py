@@ -271,7 +271,8 @@ def load_config(crepo):
                         n['control']['exclude'][cns].update(cnf['control']['exclude'][cns])
             for cns in ('rpms', 'modules'):
                 if n['control']['exclude']['rpms']:
-                    logger.info('Excluding %d component(s) from the %s namespace.', len(n['control']['exclude'][cns]), cns)
+                    logger.info('Excluding %d component(s) from the %s namespace.',
+                                len(n['control']['exclude'][cns]), cns)
                 else:
                     logger.info('Not excluding any components from the %s namespace.', cns)
         else:
@@ -318,7 +319,9 @@ def load_config(crepo):
                     nc[k][p]['destination'] = n['defaults'][k]['destination'] % { 'component': cname, 'stream': sname }
                     nc[k][p]['cache'] = {
                             'source': n['defaults']['cache']['source'] % { 'component': cname, 'stream': sname },
-                            'destination': n['defaults']['cache']['destination'] % { 'component': cname, 'stream': sname },
+                            'destination': n['defaults']['cache']['destination'] % {
+                                'component': cname, 'stream': sname
+                            },
                         }
                     if cnf[k][p] is None:
                         cnf[k][p] = dict()
@@ -443,12 +446,14 @@ def sync_repo(comp, ns='rpms', nvr=None):
             logger.debug('Checking the availability of %s/%s#%s.', ns, comp, bname)
             try:
                 repo.git.rev_parse('--quiet', bname, '--')
-                logger.debug('%s/%s#%s is taken.  Some people choose really weird branch names.  Retrying, attempt #%d/%d.', ns, comp, bname, attempt + 1, retry)
+                logger.debug('%s/%s#%s is taken.  Some people choose really weird branch names.  '
+                             'Retrying, attempt #%d/%d.', ns, comp, bname, attempt + 1, retry)
             except Exception:
                 logger.debug('Using %s/%s#%s as the temporary merge branch name.', ns, comp, bname)
                 break
         else:
-            logger.error('Exhausted attempts finding an unused branch name while synchronizing %s/%s; this is very rare, congratulations.  Skipping.', ns, comp)
+            logger.error('Exhausted attempts finding an unused branch name while synchronizing %s/%s;'
+                         'this is very rare, congratulations.  Skipping.', ns, comp)
             return None
         try:
             actor = '{} <{}>'.format(c['main']['git']['author'], c['main']['git']['email'])
@@ -528,9 +533,13 @@ def sync_cache(comp, sources, ns='rpms'):
         logger.critical('The component %s/%s is excluded from sync, aborting.', ns, comp)
         return None
     logger.debug('Synchronizing %d cache file(s) for %s/%s.', len(sources), ns, comp)
-    scache = pyrpkg.lookaside.CGILookasideCache('sha512', c['main']['source']['cache']['url'], c['main']['source']['cache']['cgi'])
+    scache = pyrpkg.lookaside.CGILookasideCache('sha512',
+                                                c['main']['source']['cache']['url'],
+                                                c['main']['source']['cache']['cgi'])
     scache.download_path = c['main']['source']['cache']['path']
-    dcache = pyrpkg.lookaside.CGILookasideCache('sha512', c['main']['destination']['cache']['url'], c['main']['destination']['cache']['cgi'])
+    dcache = pyrpkg.lookaside.CGILookasideCache('sha512',
+                                                c['main']['destination']['cache']['url'],
+                                                c['main']['destination']['cache']['cgi'])
     dcache.download_path = c['main']['destination']['cache']['path']
     tempdir = tempfile.TemporaryDirectory(prefix='cache-{}-{}-'.format(ns, comp))
     logger.debug('Temporary directory created: %s', tempdir.name)
@@ -546,22 +555,29 @@ def sync_cache(comp, sources, ns='rpms'):
         for attempt in range(retry):
             try:
                 if not dcache.remote_file_exists('{}/{}'.format(ns, dcname), s[0], s[1]):
-                    logger.debug('File %s for %s/%s (%s/%s) not available in the destination cache, downloading.', s[0], ns, comp, ns, dcname)
-                    scache.download('{}/{}'.format(ns, scname), s[0], s[1], os.path.join(tempdir.name, s[0]), hashtype=s[2])
-                    logger.debug('File %s for %s/%s (%s/%s) successfully downloaded.  Uploading to the destination cache.', s[0], ns, comp, ns, scname)
+                    logger.debug('File %s for %s/%s (%s/%s) not available in the destination cache, downloading.',
+                                 s[0], ns, comp, ns, dcname)
+                    scache.download('{}/{}'.format(ns, scname), s[0], s[1], os.path.join(tempdir.name, s[0]),
+                                    hashtype=s[2])
+                    logger.debug('File %s for %s/%s (%s/%s) successfully downloaded.  '
+                                 'Uploading to the destination cache.', s[0], ns, comp, ns, scname)
                     if not dry_run:
                         dcache.upload('{}/{}'.format(ns, dcname), os.path.join(tempdir.name, s[0]), s[1])
-                        logger.debug('File %s for %s/%s (%s/%s) )successfully uploaded to the destination cache.', s[0], ns, comp, ns, dcname)
+                        logger.debug('File %s for %s/%s (%s/%s) )successfully uploaded to the destination cache.',
+                                     s[0], ns, comp, ns, dcname)
                     else:
                         logger.debug('Running in dry run mode, not uploading %s for %s/%s.', s[0], ns, comp)
                 else:
-                    logger.debug('File %s for %s/%s (%s/%s) already uploaded, skipping.', s[0], ns, comp, ns, dcname)
+                    logger.debug('File %s for %s/%s (%s/%s) already uploaded, skipping.',
+                                 s[0], ns, comp, ns, dcname)
             except Exception:
-                logger.warning('Failed attempt #%d/%d handling %s for %s/%s (%s/%s -> %s/%s), retrying.', attempt + 1, retry, s[0], ns, comp, ns, scname, ns, dcname, exc_info=True)
+                logger.warning('Failed attempt #%d/%d handling %s for %s/%s (%s/%s -> %s/%s), retrying.',
+                               attempt + 1, retry, s[0], ns, comp, ns, scname, ns, dcname, exc_info=True)
             else:
                 break
         else:
-            logger.error('Exhausted lookaside cache synchronization attempts for %s/%s while working on %s, skipping.', ns, comp, s[0])
+            logger.error('Exhausted lookaside cache synchronization attempts for %s/%s while working on %s, skipping.',
+                         ns, comp, s[0])
             return None
     return len(sources)
 
@@ -592,14 +608,19 @@ def build_comp(comp, ref, ns='rpms'):
             buildcomp = split_scmurl(c['comps'][ns][comp]['destination'])['comp']
         try:
             if not dry_run:
-                task = bsys.build('{}/{}/{}#{}'.format(c['main']['build']['prefix'], ns, buildcomp, ref), c['main']['build']['target'], { 'scratch': c['main']['build']['scratch'] })
-                logger.debug('Build submitted for %s/%s; task %d; SCMURL: %s/%s/%s#%s.', ns, comp, task, c['main']['build']['prefix'], ns, buildcomp, ref)
+                task = bsys.build('{}/{}/{}#{}'.format(c['main']['build']['prefix'], ns, buildcomp, ref),
+                                  c['main']['build']['target'],
+                                  { 'scratch': c['main']['build']['scratch'] })
+                logger.debug('Build submitted for %s/%s; task %d; SCMURL: %s/%s/%s#%s.',
+                             ns, comp, task, c['main']['build']['prefix'], ns, buildcomp, ref)
             else:
                 task = 0
-                logger.info('Running in the dry mode, not submitting any builds for %s/%s (%s/%s/%s#%s).', ns, comp, c['main']['build']['prefix'], ns, buildcomp, ref)
+                logger.info('Running in the dry mode, not submitting any builds for %s/%s (%s/%s/%s#%s).',
+                            ns, comp, c['main']['build']['prefix'], ns, buildcomp, ref)
             return task
         except Exception:
-            logger.exception('Failed submitting build for %s/%s (%s/%s/%s#%s).', ns, comp, c['main']['build']['prefix'], ns, comp, ref)
+            logger.exception('Failed submitting build for %s/%s (%s/%s/%s#%s).',
+                             ns, comp, c['main']['build']['prefix'], ns, comp, ref)
             return None
     elif ns == 'modules':
         logger.critical('Cannot build %s/%s; module building not implemented.', ns, comp)
@@ -669,8 +690,10 @@ def process_components(compset):
         return None
     if not compset:
         logger.debug('No components selected, gathering components from triggers.')
-        compset.update('{}/{}'.format('rpms', x['package_name']) for x in get_buildsys('source').listTagged(c['main']['trigger']['rpms'], latest=True))
-        compset.update('{}/{}:{}'.format('modules', x['package_name'], x['version']) for x in get_buildsys('source').listTagged(c['main']['trigger']['modules'], latest=True))
+        compset.update('{}/{}'.format('rpms', x['package_name']) for x in get_buildsys('source').listTagged(
+            c['main']['trigger']['rpms'], latest=True))
+        compset.update('{}/{}:{}'.format('modules', x['package_name'], x['version']) for x in get_buildsys(
+            'source').listTagged(c['main']['trigger']['modules'], latest=True))
     logger.info('Processing %d component(s).', len(compset))
     processed = 0
     for rec in sorted(compset, key=str.lower):
@@ -681,13 +704,15 @@ def process_components(compset):
         m = m.groupdict()
         logger.info('Processing %s.', rec)
         if m['namespace'] == 'modules':
-            logger.warning('The modules/%s component is a module; modules currently not implemented, skipping.', m['component'])
+            logger.warning('The modules/%s component is a module; modules currently not implemented, skipping.',
+                           m['component'])
             continue
         if m['component'] in c['main']['control']['exclude'][m['namespace']]:
             logger.info('The %s/%s component is excluded from sync, skipping.', m['namespace'], m['component'])
             continue
         if c['main']['control']['strict'] and m['component'] not in c['comps'][m['namespace']]:
-            logger.info('The %s/%s component not configured while the strict mode is enabled, ignoring.', m['namespace'], m['component'])
+            logger.info('The %s/%s component not configured while the strict mode is enabled, ignoring.',
+                        m['namespace'], m['component'])
             continue
         ref = sync_repo(comp=m['component'], ns=m['namespace'])
         if ref is not None:
@@ -775,7 +800,8 @@ def get_buildsys(which):
             bsys = koji.read_config(profile_name=c['main'][which]['profile'])
             bsys = koji.ClientSession(bsys['server'], opts=bsys)
         except Exception:
-            logger.exception('Failed initializing the %s koji instance with the "%s" profile, skipping.', which, c['main'][which]['profile'])
+            logger.exception('Failed initializing the %s koji instance with the "%s" profile, skipping.',
+                             which, c['main'][which]['profile'])
             return None
         logger.debug('The %s koji instance initialized.', which)
         if which == 'destination':
