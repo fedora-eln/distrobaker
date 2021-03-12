@@ -774,7 +774,7 @@ def get_build(comp, ns='rpms'):
             return nvr[0]['nvr']
         logger.error('Did not find any builds for %s/%s.', ns, comp)
         return None
-    elif ns == 'modules':
+    if ns == 'modules':
         logger.error('Modules not implemented, cannot get the latest build for %s/%s.', ns, comp)
         return None
     logger.error('Unrecognized namespace: %s/%s', ns, comp)
