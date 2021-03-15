@@ -778,8 +778,8 @@ def get_build(comp, ns='rpms'):
         return None
     if ns == 'modules':
         logger.error('Modules not implemented, cannot get the latest build for %s/%s.', ns, comp)
-        return None
-    logger.error('Unrecognized namespace: %s/%s', ns, comp)
+    else:
+        logger.error('Unrecognized namespace: %s/%s', ns, comp)
     return None
 
 def get_buildsys(which):
