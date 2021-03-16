@@ -79,7 +79,7 @@ def listen(logger):
     """
     logger.info('Listening for messages.')
     fedora_messaging.api.consume(distrobaker.process_message)
-    logger.critical('Messege bus connection lost.')
+    logger.critical('Message bus connection lost.')
 
 def chew(compset, logger):
     """Process a set of components in one go and exit.

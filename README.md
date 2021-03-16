@@ -135,11 +135,11 @@ configuration:
         - testmodule2:master
   defaults:
     rpms:
-      source: "%(component)s.git#master"
+      source: "%(component)s.git"
       destination: "%(component)s.git#fluff-42.0.0-alpha"
-    rpms:
-      source: "%(component)s.git#master"
-      destination: "%(component)s.git#fluff-42.0.0-alpha"
+    modules:
+      source: "%(component)s.git#%(stream)s"
+      destination: "%(component)s.git#%(stream)s-fluff-42.0.0-alpha"
     cache:
       source: "%(component)s"
       destination: "%(component)s"
