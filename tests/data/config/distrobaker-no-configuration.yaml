@@ -1,0 +1,13 @@
+components:
+  rpms:
+    gzip:
+      source: gzip.git
+      destination: gzip.git#fluff-42.0.0-alpha-experimental
+    ipa:
+      source: freeipa.git#f33
+      cache:
+        source: freeipa
+        destination: ipa
+  modules:
+    testmodule:master:
+      destination: testmodule#stream-master-fluff-42.0.0-alpha-experimental
