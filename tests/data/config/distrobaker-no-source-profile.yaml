@@ -1,0 +1,65 @@
+configuration:
+  source:
+    scm: https://src.fedoraproject.org/
+    cache:
+      url: https://src.fedoraproject.org/repo/pkgs
+      cgi: https://src.fedoraproject.org/repo/pkgs/upload.cgi
+      path: "%(name)s/%(filename)s/%(hashtype)s/%(hash)s/%(filename)s"
+    mbs: https://mbs.fedoraproject.org
+  destination:
+    scm: ssh://pkgs.example.com/
+    cache:
+      url: http://pkgs.example.com/repo
+      cgi: http://pkgs.example.com/lookaside/upload.cgi
+      path: "%(name)s/%(filename)s/%(hashtype)s/%(hash)s/%(filename)s"
+    profile: brew
+    mbs: https://mbs.example.com
+  trigger:
+    rpms: rawhide
+    modules: rawhide-modular
+  build:
+    prefix: git://pkgs.example.com/
+    target: fluff-42.0.0-alpha-candidate
+    scratch: false
+  git:
+    author: DistroBaker
+    email: noreply@example.com
+    message: >
+      Merged update from upstream sources
+
+      This is an automated DistroBaker update from upstream sources.  If you do not
+      know what this is about or would like to opt out, contact the DistroBaker maintainers.
+  control:
+    strict: false
+    build: true
+    merge: true
+    exclude:
+      rpms:
+        - firefox
+        - kernel
+        - thunderbird
+      modules:
+        - testmodule2:master
+  defaults:
+    rpms:
+      source: "%(component)s.git"
+      destination: "%(component)s.git#fluff-42.0.0-alpha"
+    modules:
+      source: "%(component)s.git#%(stream)s"
+      destination: "%(component)s.git#%(stream)s-fluff-42.0.0-alpha"
+    cache:
+      source: "%(component)s"
+      destination: "%(component)s"
+components:
+  rpms:
+    gzip:
+      source: gzip.git
+      destination: gzip.git#fluff-42.0.0-alpha-experimental
+    ipa:
+      source: freeipa.git#f33
+      cache:
+        source: freeipa
+        destination: ipa
+  modules:
+    testmodule:master:
+      destination: testmodule#stream-master-fluff-42.0.0-alpha-experimental

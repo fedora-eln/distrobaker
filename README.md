@@ -383,3 +383,27 @@ cache:
   source: foo
   destination: bar
 ```
+
+## Development
+
+### Unit-testing
+
+Install packages required to test the python scripts:
+
+```
+$ sudo dnf install -y \
+    gcc \
+    git \
+    krb5-devel \
+    libcurl-devel \
+    openssl-devel \
+    python3-devel \
+    rpm-devel \
+    tox
+```
+
+Run the tests:
+
+```
+$ tox
+```
