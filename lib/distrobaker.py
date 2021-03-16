@@ -294,7 +294,7 @@ def load_config(crepo):
             logger.error('Configuration error: defaults missing.')
             return None
     else:
-        logger.error('The requires configuration block is missing.')
+        logger.error('The required configuration block is missing.')
         return None
     components = 0
     nc = {
