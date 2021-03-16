@@ -3,6 +3,7 @@ import os
 import random
 import string
 import tempfile
+import datetime
 
 import git
 import koji
@@ -796,7 +797,15 @@ def get_buildsys(which):
     if which not in ('source', 'destination'):
         logger.error('Cannot get "%s" build system.', which)
         return None
-    if not hasattr(get_buildsys, which):
+
+    session_timed_out = False
+    if hasattr(get_buildsys, which):
+        session_age = datetime.datetime.now() - getattr(get_buildsys, which)['session_start_time']
+        #slightly less than an hour, to be safe
+        if session_age.seconds > 3550 or session_age.days > 0:
+            session_timed_out = True
+
+    if session_timed_out or not hasattr(get_buildsys, which):
         logger.debug('Initializing the %s koji instance with the "%s" profile.', which, c['main'][which]['profile'])
         try:
             bsys = koji.read_config(profile_name=c['main'][which]['profile'])
@@ -809,11 +818,14 @@ def get_buildsys(which):
         if which == 'destination':
             logger.debug('Authenticating with the destination koji instance.')
             try:
+                if session_timed_out:
+                    bsys.logout()
                 bsys.gssapi_login()
             except Exception:
                 logger.exception('Failed authenticating against the destination koji instance, skipping.')
                 return None
             logger.debug('Successfully authenticated with the destination koji instance.')
+        bsys['session_start_time'] = datetime.datetime.now()
         if which == 'source':
             get_buildsys.source = bsys
         else:
