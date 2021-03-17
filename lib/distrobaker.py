@@ -470,7 +470,7 @@ def sync_repo(comp, ns='rpms', nvr=None):
     else:
         logger.debug('Attempting to synchronize the %s/%s branches using the clean pull mechanism.', ns, comp)
         try:
-            repo.git.pull('--ff-only', bscm['ref'])
+            repo.git.pull('--ff-only', 'source', bscm['ref'])
         except Exception:
             logger.exception('Failed to perform a clean pull for %s/%s, skipping.', ns, comp)
             return None
