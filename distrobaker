@@ -121,6 +121,8 @@ def main():
         logger.critical('Could not load configuration.')
         sys.exit(128)
     logger.info('Configuration loaded.')
+    if args.dry_run:
+        logger.info('Dry mode is enabled.  Nothing will be uploaded/pushed/built.')
     if args.oneshot:
         logger.info('Starting DistroBaker in the oneshot mode.')
         logger.warning('Modules currently not implemented and will be ignored.')

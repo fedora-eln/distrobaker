@@ -347,6 +347,183 @@ def load_config(crepo):
     c['comps'] = nc
     return c
 
+def clone_destination_repo(ns, comp, cdst, dscm, dirname):
+    """Clone the component destination SCM repository to the given directory path.
+    Git remote name 'origin' will be used.
+
+    :param ns: The component namespace
+    :param comp: The component name
+    :param cdst: The destination repository for the component
+    :param dscm: The destination SCM
+    :param dirname: Path to which the requested repository should be cloned
+    :returns: repo, or None on error
+    """
+    logger.debug('Cloning %s/%s from %s/%s/%s', ns, comp, c['main']['destination']['scm'], ns, cdst)
+    for attempt in range(retry):
+        try:
+            repo = git.Repo.clone_from(dscm['link'], dirname, branch=dscm['ref'])
+        except Exception:
+            logger.warning('Cloning attempt #%d/%d failed, retrying.', attempt + 1, retry, exc_info=True)
+            continue
+        else:
+            break
+    else:
+        logger.error('Exhausted cloning attempts for %s/%s.', ns, comp)
+        return None
+    logger.debug('Successfully cloned %s/%s.', ns, comp)
+    return repo
+
+def fetch_upstream_repo(ns, comp, csrc, sscm, repo):
+    """Fetch the component source SCM repository to the given git repo.
+    Git remote name 'source' will be used.
+
+    :param ns: The component namespace
+    :param comp: The component name
+    :param csrc: The source repository for the component
+    :param sscm: The source SCM
+    :param repo: git Repo instance to which the repository should be fetched
+    :returns: repo, or None on error
+    """
+    logger.debug('Fetching upstream repository for %s/%s.', ns, comp)
+    if sscm['ref']:
+        logger.debug('Fetching the %s upstream branch for %s/%s.', sscm['ref'], ns, comp)
+    else:
+        logger.debug('Fetching all upstream branches for %s/%s.', ns, comp)
+    repo.git.remote('add', 'source', sscm['link'])
+    for attempt in range(retry):
+        try:
+            if sscm['ref']:
+                repo.git.fetch('source', sscm['ref'])
+            else:
+                repo.git.fetch('--all')
+        except Exception:
+            logger.warning('Fetching upstream attempt #%d/%d failed, retrying.', attempt + 1, retry, exc_info=True)
+            continue
+        else:
+            break
+    else:
+        logger.error('Exhausted upstream fetching attempts for %s/%s.', ns, comp)
+        return None
+    logger.debug('Successfully fetched upstream repository for %s/%s.', ns, comp)
+    return repo
+
+def configure_repo(ns, comp, repo):
+    """Configure given git repo.
+
+    :param ns: The component namespace
+    :param comp: The component name
+    :param repo: git Repo instance for the repository to be configured
+    :returns: repo, or None on error
+    """
+    logger.debug('Configuring repository properties for %s/%s.', ns, comp)
+    try:
+        repo.git.config('user.name', c['main']['git']['author'])
+        repo.git.config('user.email', c['main']['git']['email'])
+    except Exception:
+        logger.exception('Failed configuring the git repository while processing %s/%s.', ns, comp)
+        return None
+    logger.debug('Sucessfully configured repository properties for %s/%s.', ns, comp)
+    return repo
+
+def sync_repo_merge(ns, comp, repo, bscm, sscm, dscm):
+    """Synchronize component repo source branch into the desination branch using
+    the merge mechanism.
+
+    Does not push the repo.
+
+    :param ns: The component namespace
+    :param comp: The component name
+    :param repo: git Repo instance to be synchronized
+    :param bscm: The component build SCM
+    :param sscm: The source SCM
+    :param dscm: The destination SCM
+    :returns: repo, or None on error
+    """
+    logger.debug('Attempting to synchronize the %s/%s branches using the merge mechanism.', ns, comp)
+    logger.debug('Generating a temporary merge branch name for %s/%s.', ns, comp)
+    for attempt in range(retry):
+        bname = ''.join(random.choice(string.ascii_letters) for i in range(16))
+        logger.debug('Checking the availability of %s/%s#%s.', ns, comp, bname)
+        try:
+            repo.git.rev_parse('--quiet', bname, '--')
+            logger.debug('%s/%s#%s is taken.  Some people choose really weird branch names.  '
+                         'Retrying, attempt #%d/%d.', ns, comp, bname, attempt + 1, retry)
+        except Exception:
+            logger.debug('Using %s/%s#%s as the temporary merge branch name.', ns, comp, bname)
+            break
+    else:
+        logger.error('Exhausted attempts finding an unused branch name while synchronizing %s/%s;'
+                     'this is very rare, congratulations.  Skipping.', ns, comp)
+        return None
+    try:
+        actor = '{} <{}>'.format(c['main']['git']['author'], c['main']['git']['email'])
+        repo.git.checkout(bscm['ref'])
+        repo.git.switch('-c', bname)
+        repo.git.merge('--allow-unrelated-histories', '--no-commit', '-s', 'ours', dscm['ref'])
+        repo.git.commit('--author', actor, '--allow-empty', '-m', 'Temporary working tree merge')
+        repo.git.checkout(dscm['ref'])
+        repo.git.merge('--no-commit', '--squash', bname)
+        msg = '{}\nSource: {}#{}'.format(c['main']['git']['message'], sscm['link'], bscm['ref'])
+        with tempfile.NamedTemporaryFile(mode="w", prefix='msg-{}-{}-'.format(ns, comp)) as msgfile:
+            msgfile.write(msg)
+            msgfile.flush()
+            repo.git.commit('--author', actor, '--allow-empty', '-F', msgfile.name)
+    except Exception:
+        logger.exception('Failed to merge %s/%s.', ns, comp)
+        return None
+    logger.debug('Successfully merged %s/%s with upstream.', ns, comp)
+    return repo
+
+def sync_repo_pull(ns, comp, repo, bscm):
+    """Synchronize component repo source branch into the desination branch using
+    the clean pull mechanism. Branches must be compatible.
+
+    Does not push the repo.
+
+    :param ns: The component namespace
+    :param comp: The component name
+    :param repo: git Repo instance to be synchronized
+    :param bscm: The component build SCM
+    :returns: repo, or None on error
+    """
+    logger.debug('Attempting to synchronize the %s/%s branches using the clean pull mechanism.', ns, comp)
+    try:
+        repo.git.pull('--ff-only', 'source', bscm['ref'])
+    except Exception:
+        logger.exception('Failed to perform a clean pull for %s/%s, skipping.', ns, comp)
+        return None
+    logger.debug('Successfully pulled %s/%s from upstream.', ns, comp)
+    return repo
+
+def repo_push(ns, comp, repo, dscm):
+    """Push synchronized repo to component destination SCM repository
+
+    :param ns: The component namespace
+    :param comp: The component name
+    :param repo: git Repo instance to be synchronized
+    :param dscm: The destination SCM
+    :returns: repo, or None on error
+    """
+    logger.debug('Pushing synchronized contents for %s/%s.', ns, comp)
+    for attempt in range(retry):
+        try:
+            if not dry_run:
+                logger.debug('Pushing %s/%s.', ns, comp)
+                repo.git.push('--set-upstream', 'origin', dscm['ref'])
+                logger.debug('Successfully pushed %s/%s.', ns, comp)
+            else:
+                logger.debug('Pushing %s/%s (--dry-run).', ns, comp)
+                repo.git.push('--dry-run', '--set-upstream', 'origin', dscm['ref'])
+                logger.debug('Successfully pushed %s/%s (--dry-run).', ns, comp)
+        except Exception:
+            logger.warning('Pushing attempt #%d/%d failed, retrying.', attempt + 1, retry, exc_info=True)
+            continue
+        else:
+            return repo
+    else:
+        logger.error('Exhausted pushing attempts for %s/%s.', ns, comp)
+        return None
+
 def sync_repo(comp, ns='rpms', nvr=None):
     """Synchronizes the component SCM repository for the given NVR.
     If no NVR is provided, finds the latest build in the corresponding
@@ -365,14 +542,19 @@ def sync_repo(comp, ns='rpms', nvr=None):
     if comp in c['main']['control']['exclude'][ns]:
         logger.critical('The component %s/%s is excluded from sync, aborting.', ns, comp)
         return None
+
     logger.info('Synchronizing SCM for %s/%s.', ns, comp)
+
     nvr = nvr if nvr else get_build(comp, ns=ns)
     if nvr is None:
         logger.error('NVR not specified and no builds for %s/%s could be found, skipping.', ns, comp)
         return None
+
     logger.debug('Processing %s/%s: %s', ns, comp, nvr)
+
     tempdir = tempfile.TemporaryDirectory(prefix='repo-{}-{}-'.format(ns, comp))
     logger.debug('Temporary directory created: %s', tempdir.name)
+
     bscm = get_scmurl(nvr)
     if bscm is None:
         logger.error('Could not find build SCMURL for %s/%s: %s, skipping.', ns, comp, nvr)
@@ -393,99 +575,42 @@ def sync_repo(comp, ns='rpms', nvr=None):
     sscm = split_scmurl('{}/{}/{}'.format(c['main']['source']['scm'], ns, csrc))
     dscm = split_scmurl('{}/{}/{}'.format(c['main']['destination']['scm'], ns, cdst))
     dscm['ref'] = dscm['ref'] if dscm['ref'] else 'master'
-    logger.debug('Cloning %s/%s from %s/%s/%s', ns, comp, c['main']['destination']['scm'], ns, cdst)
-    for attempt in range(retry):
-        try:
-            repo = git.Repo.clone_from(dscm['link'], tempdir.name, branch=dscm['ref'])
-        except Exception:
-            logger.warning('Cloning attempt #%d/%d failed, retrying.', attempt + 1, retry, exc_info=True)
-            continue
-        else:
-            break
-    else:
-        logger.error('Exhausted cloning attempts for %s/%s, skipping.', ns, comp)
+
+    repo = clone_destination_repo(ns, comp, cdst, dscm, tempdir.name)
+    if repo is None:
+        logger.error('Failed to clone destination repo for %s/%s, skipping.', ns, comp)
         return None
-    logger.debug('Successfully cloned %s/%s.', ns, comp)
-    logger.debug('Fetching upstream repository for %s/%s.', ns, comp)
-    if sscm['ref']:
-        logger.debug('Fetching the %s upstream branch for %s/%s.', sscm['ref'], ns, comp)
-    else:
-        logger.debug('Fetching all upstream branches for %s/%s.', ns, comp)
-    repo.git.remote('add', 'source', sscm['link'])
-    for attempt in range(retry):
-        try:
-            if sscm['ref']:
-                repo.git.fetch('source', sscm['ref'])
-            else:
-                repo.git.fetch('--all')
-        except Exception:
-            logger.warning('Fetching upstream attempt #%d/%d failed, retrying.', attempt + 1, retry, exc_info=True)
-            continue
-        else:
-            break
-    else:
-        logger.error('Exhausted upstream fetching attempts for %s/%s, skipping.', ns, comp)
+
+    if fetch_upstream_repo(ns, comp, csrc, sscm, repo) is None:
+        logger.error('Failed to fetch upstream repo for %s/%s, skipping.', ns, comp)
         return None
-    logger.debug('Successfully fetched upstream repository for %s/%s.', ns, comp)
-    logger.debug('Configuring repository properties for %s/%s.', ns, comp)
-    try:
-        repo.git.config('user.name', c['main']['git']['author'])
-        repo.git.config('user.email', c['main']['git']['email'])
-    except Exception:
-        logger.exception('Failed configuring the git repository while processing %s/%s, skipping.', ns, comp)
+
+    if configure_repo(ns, comp, repo) is None:
+        logger.error('Failed to configure the git repository for %s/%s, skipping.', ns, comp)
         return None
+
     logger.debug('Gathering destination files for %s/%s.', ns, comp)
-    dsrc = parse_sources(comp, ns, os.path.join(tempdir.name, 'sources'))
+
+    dsrc = parse_sources(comp, ns, os.path.join(repo.working_dir, 'sources'))
     if dsrc is None:
         logger.error('Error processing the %s/%s destination sources file, skipping.', ns, comp)
         return None
+
     if c['main']['control']['merge']:
-        logger.debug('Attempting to synchronize the %s/%s branches using the merge mechanism.', ns, comp)
-        logger.debug('Generating a temporary merge branch name for %s/%s.', ns, comp)
-        for attempt in range(retry):
-            bname = ''.join(random.choice(string.ascii_letters) for i in range(16))
-            logger.debug('Checking the availability of %s/%s#%s.', ns, comp, bname)
-            try:
-                repo.git.rev_parse('--quiet', bname, '--')
-                logger.debug('%s/%s#%s is taken.  Some people choose really weird branch names.  '
-                             'Retrying, attempt #%d/%d.', ns, comp, bname, attempt + 1, retry)
-            except Exception:
-                logger.debug('Using %s/%s#%s as the temporary merge branch name.', ns, comp, bname)
-                break
-        else:
-            logger.error('Exhausted attempts finding an unused branch name while synchronizing %s/%s;'
-                         'this is very rare, congratulations.  Skipping.', ns, comp)
+        if sync_repo_merge(ns, comp, repo, bscm, sscm, dscm) is None:
+            logger.error('Failed to sync merge repo for %s/%s, skipping.', ns, comp)
             return None
-        try:
-            actor = '{} <{}>'.format(c['main']['git']['author'], c['main']['git']['email'])
-            repo.git.checkout(bscm['ref'])
-            repo.git.switch('-c', bname)
-            repo.git.merge('--allow-unrelated-histories', '--no-commit', '-s', 'ours', dscm['ref'])
-            repo.git.commit('--author', actor, '--allow-empty', '-m', 'Temporary working tree merge')
-            repo.git.checkout(dscm['ref'])
-            repo.git.merge('--no-commit', '--squash', bname)
-            msg = '{}\nSource: {}#{}'.format(c['main']['git']['message'], sscm['link'], bscm['ref'])
-            msgfile = tempfile.NamedTemporaryFile(prefix='msg-{}-{}-'.format(ns, comp))
-            with open(msgfile.name, 'w') as f:
-                f.write(msg)
-            repo.git.commit('--author', actor, '--allow-empty', '-F', msgfile.name)
-        except Exception:
-            logger.exception('Failed to merge %s/%s, skipping.', ns, comp)
-            return None
-        logger.debug('Successfully merged %s/%s with upstream.', ns, comp)
     else:
-        logger.debug('Attempting to synchronize the %s/%s branches using the clean pull mechanism.', ns, comp)
-        try:
-            repo.git.pull('--ff-only', 'source', bscm['ref'])
-        except Exception:
-            logger.exception('Failed to perform a clean pull for %s/%s, skipping.', ns, comp)
+        if sync_repo_pull(ns, comp, repo, bscm) is None:
+            logger.error('Failed to sync pull repo for %s/%s, skipping.', ns, comp)
             return None
-        logger.debug('Successfully pulled %s/%s from upstream.', ns, comp)
+
     logger.debug('Gathering source files for %s/%s.', ns, comp)
-    ssrc = parse_sources(comp, ns, os.path.join(tempdir.name, 'sources'))
+    ssrc = parse_sources(comp, ns, os.path.join(repo.working_dir, 'sources'))
     if ssrc is None:
         logger.error('Error processing the %s/%s source sources file, skipping.', ns, comp)
         return None
+
     srcdiff = ssrc - dsrc
     if srcdiff:
         logger.debug('Source files for %s/%s differ.', ns, comp)
@@ -494,26 +619,13 @@ def sync_repo(comp, ns='rpms', nvr=None):
             return None
     else:
         logger.debug('Source files for %s/%s are up-to-date.', ns, comp)
+
     logger.debug('Component %s/%s successfully synchronized.', ns, comp)
-    logger.debug('Pushing synchronized contents for %s/%s.', ns, comp)
-    for attempt in range(retry):
-        try:
-            if not dry_run:
-                logger.debug('Pushing %s/%s.', ns, comp)
-                repo.git.push('--set-upstream', 'origin', dscm['ref'])
-                logger.debug('Successfully pushed %s/%s.', ns, comp)
-            else:
-                logger.debug('Pushing %s/%s (--dry-run).', ns, comp)
-                repo.git.push('--dry-run', '--set-upstream', 'origin', dscm['ref'])
-                logger.debug('Successfully pushed %s/%s (--dry-run).', ns, comp)
-        except Exception:
-            logger.warning('Pushing attempt #%d/%d failed, retrying.', attempt + 1, retry, exc_info=True)
-            continue
-        else:
-            break
-    else:
-        logger.error('Exhausted pushing attempts for %s/%s, skipping.', ns, comp)
+
+    if repo_push(ns, comp, repo, dscm) is None:
+        logger.error('Failed to push %s/%s, skipping.', ns, comp)
         return None
+
     logger.info('Successfully synchronized %s/%s.', ns, comp)
     return repo.git.rev_parse('HEAD')
 
@@ -525,7 +637,7 @@ def sync_cache(comp, sources, ns='rpms'):
     :param comp: The component name
     :param sources: The set of source tuples
     :param ns: The component namespace
-    :returns: The number of files processed
+    :returns: The number of files processed, or None on error
     """
     if 'main' not in c:
         logger.critical('DistroBaker is not configured, aborting.')
