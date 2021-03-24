@@ -18,8 +18,11 @@ import time
 import fedora_messaging.api
 import regex
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), 'lib'))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "lib")
+)
 import distrobaker
+
 
 def get_config_ref(config, logger):
     """Gets the ref for the config SCMURL
@@ -35,16 +38,19 @@ def get_config_ref(config, logger):
     scm = distrobaker.split_scmurl(config)
     git = subprocess.run(
         [
-            'git',
-            'ls-remote',
-            '--heads',
-            scm['link'],
-            scm['ref'],
+            "git",
+            "ls-remote",
+            "--heads",
+            scm["link"],
+            scm["ref"],
         ],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
     if not git.stdout or git.stderr:
         return None
-    return git.stdout.split(b'\t', 1)[0]
+    return git.stdout.split(b"\t", 1)[0]
+
 
 def update(config, interval, ref, logger):
     """Update the instance configuration.
@@ -54,22 +60,39 @@ def update(config, interval, ref, logger):
     :param logger: The logger to use
     :returns: None
     """
-    logger.debug('Reloading DistroBaker configuration in %d seconds.', interval)
+    logger.debug(
+        "Reloading DistroBaker configuration in %d seconds.", interval
+    )
     while True:
         time.sleep(interval)
         nref = get_config_ref(config, logger)
         if nref is None:
-            logger.warning('The configuration repository is unavailable, skipping update.  Checking again in %d seconds.', interval)
+            logger.warning(
+                "The configuration repository is unavailable, skipping update.  Checking again in %d seconds.",
+                interval,
+            )
             continue
         if nref == ref:
-            logger.debug('Configuration not changed, skipping update.  Checking again in %d seconds.', interval)
+            logger.debug(
+                "Configuration not changed, skipping update.  Checking again in %d seconds.",
+                interval,
+            )
             continue
         ref = nref
-        logger.debug('Reloading DistroBaker configuration.')
+        logger.debug("Reloading DistroBaker configuration.")
         if distrobaker.load_config(config) is None:
-            logger.error('Failed to reload configuration.  Attempting again in {} seconds.'.format(interval))
+            logger.error(
+                "Failed to reload configuration.  Attempting again in {} seconds.".format(
+                    interval
+                )
+            )
         else:
-            logger.info('DistroBaker configuration reloaded.  Reloading again in {} seconds.'.format(interval))
+            logger.info(
+                "DistroBaker configuration reloaded.  Reloading again in {} seconds.".format(
+                    interval
+                )
+            )
+
 
 def listen(logger):
     """Start listening for fedora messaging bus style messages.
@@ -77,9 +100,10 @@ def listen(logger):
     :param logger: The logger to use
     :returns: None
     """
-    logger.info('Listening for messages.')
+    logger.info("Listening for messages.")
     fedora_messaging.api.consume(distrobaker.process_message)
-    logger.critical('Message bus connection lost.')
+    logger.critical("Message bus connection lost.")
+
 
 def chew(compset, logger):
     """Process a set of components in one go and exit.
@@ -90,51 +114,105 @@ def chew(compset, logger):
     """
     distrobaker.process_components(compset)
 
+
 def main():
-    logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s')
+    logging.basicConfig(format="%(asctime)s : %(levelname)s : %(message)s")
     logger = logging.getLogger(__name__)
     ap = argparse.ArgumentParser()
-    ap.add_argument('config', help='configuration repository SCMURL')
-    ap.add_argument('-l', '--loglevel', dest='loglevel', help='logging level; default: info', default='INFO')
-    ap.add_argument('-u', '--update', dest='update', type=int, help='configuration refresh interval in minutes; default: 5', default=5)
-    ap.add_argument('-r', '--retry', dest='retry', type=int, help='number of retries on network failures; default: 3', default=3)
-    ap.add_argument('-1', '--oneshot', action='store_true', help='sync all components and exit', default=False)
-    ap.add_argument('-d', '-n', '--dry-run', dest='dry_run', action='store_true', help='do not upload, push or build anything', default=False)
-    ap.add_argument('-s', '--select', dest='select', help='space-separated list of configured components to sync in the ns/component form; defaults to all')
+    ap.add_argument("config", help="configuration repository SCMURL")
+    ap.add_argument(
+        "-l",
+        "--loglevel",
+        dest="loglevel",
+        help="logging level; default: info",
+        default="INFO",
+    )
+    ap.add_argument(
+        "-u",
+        "--update",
+        dest="update",
+        type=int,
+        help="configuration refresh interval in minutes; default: 5",
+        default=5,
+    )
+    ap.add_argument(
+        "-r",
+        "--retry",
+        dest="retry",
+        type=int,
+        help="number of retries on network failures; default: 3",
+        default=3,
+    )
+    ap.add_argument(
+        "-1",
+        "--oneshot",
+        action="store_true",
+        help="sync all components and exit",
+        default=False,
+    )
+    ap.add_argument(
+        "-d",
+        "-n",
+        "--dry-run",
+        dest="dry_run",
+        action="store_true",
+        help="do not upload, push or build anything",
+        default=False,
+    )
+    ap.add_argument(
+        "-s",
+        "--select",
+        dest="select",
+        help="space-separated list of configured components to sync in the ns/component form; defaults to all",
+    )
     args = ap.parse_args()
     loglevel = getattr(logging, args.loglevel.upper())
     if not isinstance(loglevel, int):
-        print('Invalid loglevel: {}'.format(args.loglevel))
+        print("Invalid loglevel: {}".format(args.loglevel))
         sys.exit(1)
     logger.setLevel(loglevel)
     distrobaker.loglevel(loglevel)
     distrobaker.retries(args.retry)
     distrobaker.pretend(args.dry_run)
     if args.select and not args.oneshot:
-        logger.critical('Selecting components only works with oneshot mode.')
+        logger.critical("Selecting components only works with oneshot mode.")
         sys.exit(1)
     configref = get_config_ref(args.config, logger)
     if configref is None:
-        logger.critical('The configuration repository is unavailable, cannot continue, exiting.')
+        logger.critical(
+            "The configuration repository is unavailable, cannot continue, exiting."
+        )
         sys.exit(128)
     if distrobaker.load_config(args.config) is None:
-        logger.critical('Could not load configuration.')
+        logger.critical("Could not load configuration.")
         sys.exit(128)
-    logger.info('Configuration loaded.')
+    logger.info("Configuration loaded.")
     if args.dry_run:
-        logger.info('Dry mode is enabled.  Nothing will be uploaded/pushed/built.')
+        logger.info(
+            "Dry mode is enabled.  Nothing will be uploaded/pushed/built."
+        )
     if args.oneshot:
-        logger.info('Starting DistroBaker in the oneshot mode.')
-        logger.warning('Modules currently not implemented and will be ignored.')
-        chew(set(regex.split(r'\s+', args.select)) if args.select else set(), logger)
-        logger.info('All components processed, exiting.')
+        logger.info("Starting DistroBaker in the oneshot mode.")
+        logger.warning(
+            "Modules currently not implemented and will be ignored."
+        )
+        chew(
+            set(regex.split(r"\s+", args.select)) if args.select else set(),
+            logger,
+        )
+        logger.info("All components processed, exiting.")
     else:
-        logger.info('Starting DistroBaker in the service mode.')
-        threading.Thread(target=update, args=(args.config, args.update * 60, configref, logger), daemon=True).start()
-        thread = threading.Thread(target=listen, args=(logger, ))
+        logger.info("Starting DistroBaker in the service mode.")
+        threading.Thread(
+            target=update,
+            args=(args.config, args.update * 60, configref, logger),
+            daemon=True,
+        ).start()
+        thread = threading.Thread(target=listen, args=(logger,))
         thread.start()
         thread.join()
-        logger.critical('Failed connecting to the message bus, exiting.')
+        logger.critical("Failed connecting to the message bus, exiting.")
+
 
 if __name__ == "__main__":
     main()

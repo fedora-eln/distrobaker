@@ -39,7 +39,9 @@ class TestMiscParsing(unittest.TestCase):
             {"link": "", "ref": None, "ns": None, "comp": ""},
         )
         self.assertDictEqual(
-            distrobaker.split_scmurl("https://example.com/distrobaker.git#prod"),
+            distrobaker.split_scmurl(
+                "https://example.com/distrobaker.git#prod"
+            ),
             {
                 "link": "https://example.com/distrobaker.git",
                 "ref": "prod",
@@ -53,7 +55,12 @@ class TestMiscParsing(unittest.TestCase):
         )
         self.assertDictEqual(
             distrobaker.split_scmurl("/tmp/conf#testbranch"),
-            {"link": "/tmp/conf", "ref": "testbranch", "ns": "tmp", "comp": "conf"},
+            {
+                "link": "/tmp/conf",
+                "ref": "testbranch",
+                "ns": "tmp",
+                "comp": "conf",
+            },
         )
         self.assertDictEqual(
             distrobaker.split_scmurl(
@@ -75,14 +82,16 @@ class TestMiscParsing(unittest.TestCase):
             distrobaker.split_module(":"), {"name": "", "stream": "master"}
         )
         self.assertDictEqual(
-            distrobaker.split_module("name"), {"name": "name", "stream": "master"}
+            distrobaker.split_module("name"),
+            {"name": "name", "stream": "master"},
         )
         self.assertDictEqual(
             distrobaker.split_module("name:stream"),
             {"name": "name", "stream": "stream"},
         )
         self.assertDictEqual(
-            distrobaker.split_module(":stream"), {"name": "", "stream": "stream"}
+            distrobaker.split_module(":stream"),
+            {"name": "", "stream": "stream"},
         )
         self.assertDictEqual(
             distrobaker.split_module("name:stream:version:context"),

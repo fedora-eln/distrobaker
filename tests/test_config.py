@@ -25,7 +25,8 @@ class TestConfigSetting(unittest.TestCase):
     def test_load_config(self):
         with tempfile.TemporaryDirectory() as td:
             helpers.setup_test_repo(
-                td, os.path.join(helpers.DATA_DIR, "config", "distrobaker.yaml")
+                td,
+                os.path.join(helpers.DATA_DIR, "config", "distrobaker.yaml"),
             )
             # attempting to load config without specifying a branch will fail
             cfg = distrobaker.load_config(td)
