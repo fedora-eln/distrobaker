@@ -800,7 +800,7 @@ def get_buildsys(which):
 
     session_timed_out = False
     if hasattr(get_buildsys, which):
-        session_age = datetime.datetime.now() - getattr(get_buildsys, which)['session_start_time']
+        session_age = datetime.datetime.now() - getattr(get_buildsys, which+'_session_start_time')
         #slightly less than an hour, to be safe
         if session_age.seconds > 3550 or session_age.days > 0:
             session_timed_out = True
@@ -825,11 +825,12 @@ def get_buildsys(which):
                 logger.exception('Failed authenticating against the destination koji instance, skipping.')
                 return None
             logger.debug('Successfully authenticated with the destination koji instance.')
-        bsys['session_start_time'] = datetime.datetime.now()
         if which == 'source':
             get_buildsys.source = bsys
+            get_buildsys.source_session_start_time = datetime.datetime.now()
         else:
             get_buildsys.destination = bsys
+            get_buildsys.destination_session_start_time = datetime.datetime.now()
     else:
         logger.debug('The %s koji instance is already initialized, fetching from cache.', which)
     return vars(get_buildsys)[which]
