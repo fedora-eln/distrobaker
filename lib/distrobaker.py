@@ -380,7 +380,10 @@ def load_config(crepo):
                     }
                     nc[k][p]["destination"] = n["defaults"][k][
                         "destination"
-                    ] % {"component": cname, "stream": sname}
+                    ] % {
+                        "component": cname,
+                        "stream": sname,
+                    }
                     nc[k][p]["cache"] = {
                         "source": n["defaults"]["cache"]["source"]
                         % {"component": cname, "stream": sname},
@@ -897,7 +900,8 @@ def sync_cache(comp, sources, ns="rpms"):
                     "{}/{}".format(ns, dcname), s[0], s[1]
                 ):
                     logger.debug(
-                        "File %s for %s/%s (%s/%s) not available in the destination cache, downloading.",
+                        "File %s for %s/%s (%s/%s) not available in the "
+                        "destination cache, downloading.",
                         s[0],
                         ns,
                         comp,
@@ -927,7 +931,8 @@ def sync_cache(comp, sources, ns="rpms"):
                             s[1],
                         )
                         logger.debug(
-                            "File %s for %s/%s (%s/%s) )successfully uploaded to the destination cache.",
+                            "File %s for %s/%s (%s/%s) )successfully uploaded "
+                            "to the destination cache.",
                             s[0],
                             ns,
                             comp,
@@ -968,7 +973,8 @@ def sync_cache(comp, sources, ns="rpms"):
                 break
         else:
             logger.error(
-                "Exhausted lookaside cache synchronization attempts for %s/%s while working on %s, skipping.",
+                "Exhausted lookaside cache synchronization attempts for %s/%s "
+                "while working on %s, skipping.",
                 ns,
                 comp,
                 s[0],
@@ -1122,12 +1128,14 @@ def process_message(msg):
                     )
             else:
                 logger.debug(
-                    "RPM component %s not configured for sync and the strict mode is enabled, ignoring.",
+                    "RPM component %s not configured for sync and the strict "
+                    "mode is enabled, ignoring.",
                     comp,
                 )
         elif tag == c["main"]["trigger"]["modules"]:
             logger.error(
-                "The message matches our module configuration but module building not implemented, ignoring."
+                "The message matches our module configuration but module "
+                "building not implemented, ignoring."
             )
         else:
             logger.debug("Message tag not configured as a trigger, ignoring.")
@@ -1173,7 +1181,8 @@ def process_components(compset):
         logger.info("Processing %s.", rec)
         if m["namespace"] == "modules":
             logger.warning(
-                "The modules/%s component is a module; modules currently not implemented, skipping.",
+                "The modules/%s component is a module; modules currently not "
+                "implemented, skipping.",
                 m["component"],
             )
             continue

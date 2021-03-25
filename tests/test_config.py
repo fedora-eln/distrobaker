@@ -3,7 +3,6 @@
 import distrobaker
 import helpers
 import os
-import pytest
 import sys
 import tempfile
 

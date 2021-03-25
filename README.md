@@ -386,6 +386,10 @@ cache:
 
 ## Development
 
+### Code style
+
+Please format code using `black -l 79`.
+
 ### Unit-testing
 
 Install packages required to test the python scripts:
