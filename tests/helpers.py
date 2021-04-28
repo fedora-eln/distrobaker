@@ -57,6 +57,11 @@ def setup_test_repo(git_repo_dir, cfg_file=None):
         ["bash", "-c", "echo test > README"],
     ]
     if cfg_file:
+        if cfg_file.startswith(("---\n", "configuration:\n")):
+            tf = tempfile.NamedTemporaryFile(mode="w")
+            tf.write(cfg_file)
+            tf.flush()
+            cfg_file = tf.name
         cmds.extend(
             [
                 ["cp", cfg_file, "distrobaker.yaml"],

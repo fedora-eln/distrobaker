@@ -23,6 +23,9 @@ configuration:
         - openid
         - https://id.example.com/scope/groups
         - https://mbs.example.com/oidc/submit-build
+  trigger:
+    rpms: rawhide
+    modules: rawhide-modular
   build:
     prefix: git://pkgs.example.com/
     target: fluff-42.0.0-alpha-candidate

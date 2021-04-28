@@ -6,7 +6,6 @@ configuration:
       cgi: https://src.fedoraproject.org/repo/pkgs/upload.cgi
       path: "%(name)s/%(filename)s/%(hashtype)s/%(hash)s/%(filename)s"
     profile: koji
-    mbs: https://mbs.fedoraproject.org
   destination:
     scm: ssh://pkgs.example.com/
     cache:
@@ -14,7 +13,16 @@ configuration:
       cgi: http://pkgs.example.com/lookaside/upload.cgi
       path: "%(name)s/%(filename)s/%(hashtype)s/%(hash)s/%(filename)s"
     profile: brew
-    mbs: https://mbs.example.com
+    mbs:
+      api_url: https://mbs.example.com/module-build-service/1/
+      auth_method: oidc
+      oidc_id_provider: https://id.example.com/openidc/
+      oidc_client_id: mbs-authorizer
+      oidc_client_secret: notsecret
+      oidc_scopes:
+        - openid
+        - https://id.example.com/scope/groups
+        - https://mbs.example.com/oidc/submit-build
   trigger:
     rpms: rawhide
     modules: rawhide-modular
@@ -22,6 +30,7 @@ configuration:
     prefix: git://pkgs.example.com/
     target: fluff-42.0.0-alpha-candidate
     scratch: false
+    platform: platform:fl42
   git:
     author: DistroBaker
     email: noreply@example.com
@@ -48,6 +57,9 @@ configuration:
     modules:
       source: "%(component)s.git#%(stream)s"
       destination: "%(component)s.git#%(stream)s-fluff-42.0.0-alpha"
+      rpms:
+        source: "%(component)s.git"
+        destination: "%(component)s.git#stream-%(name)s-%(stream)s"
     cache:
       source: "%(component)s"
       destination: "%(component)s"
@@ -64,3 +76,8 @@ components:
   modules:
     testmodule:master:
       destination: testmodule#stream-master-fluff-42.0.0-alpha-experimental
+      rpms:
+        componentrpm:
+          source: componentsource.git#sourcebranch
+          destination: coomponentrpm.git#fluff-42.0.0-alpha-experimental
+        anotherrpm: {}
