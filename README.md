@@ -98,7 +98,6 @@ configuration:
       cgi: https://src.fedoraproject.org/repo/pkgs/upload.cgi
       path: "%(name)s/%(filename)s/%(hashtype)s/%(hash)s/%(filename)s"
     profile: koji
-    mbs: https://mbs.fedoraproject.org
   destination:
     scm: ssh://pkgs.example.com/
     cache:
@@ -106,7 +105,16 @@ configuration:
       cgi: http://pkgs.example.com/lookaside/upload.cgi
       path: "%(name)s/%(filename)s/%(hashtype)s/%(hash)s/%(filename)s"
     profile: brew
-    mbs: https://mbs.example.com
+    mbs:
+      api_url: https://mbs.example.com/module-build-service/1/
+      auth_method: oidc
+      oidc_id_provider: https://id.example.com/openidc/
+      oidc_client_id: mbs-authorizer
+      oidc_client_secret: notsecret
+      oidc_scopes:
+        - openid
+        - https://id.example.com/scope/groups
+        - https://mbs.example.com/oidc/submit-build
   trigger:
     rpms: rawhide
     modules: rawhide-modular
@@ -114,6 +122,7 @@ configuration:
     prefix: git://pkgs.example.com/
     target: fluff-42.0.0-alpha-candidate
     scratch: false
+    platform: platform:fl42
   git:
     author: DistroBaker
     email: noreply@example.com
@@ -140,6 +149,9 @@ configuration:
     modules:
       source: "%(component)s.git#%(stream)s"
       destination: "%(component)s.git#%(stream)s-fluff-42.0.0-alpha"
+      rpms:
+        source: "%(component)s.git"
+        destination: "%(component)s.git#stream-%(name)s-%(stream)s"
     cache:
       source: "%(component)s"
       destination: "%(component)s"
@@ -156,6 +168,10 @@ components:
   modules:
     testmodule:master:
       destination: testmodule#stream-master-fluff-42.0.0-alpha-experimental
+      rpms:
+        componentrpm:
+          source: componentsource.git#sourcebranch
+          destination: coomponentrpm.git#fluff-42.0.0-alpha-experimental
 ```
 
 ### Configuration options
@@ -184,8 +200,6 @@ passed to pyrpkg defining the file path used by this particular cache.
 configuration must be available on the host, along with the necessary
 certificates.
 
-`mbs` is a stub link to the MBS instance.  This is currently unused.
-
 Example:
 
 ```yaml
@@ -196,7 +210,6 @@ source:
     cgi: https://src.fedoraproject.org/repo/pkgs/upload.cgi
     path: "%(name)s/%(filename)s/%(hashtype)s/%(hash)s/%(filename)s"
   profile: koji
-  mbs: https://mbs.fedoraproject.org
 ```
 
 ##### `destination`
@@ -205,7 +218,38 @@ The `destination` block configures the downstream destination source control
 and cache.  DistroBaker needs write access to both to effectively sync
 components.
 
-The structure is the same as that of the `source` block.
+The structure is the same as that of the `source` block plus the addition of a
+mandatory `mbs` block.
+
+The `mbs` block configures the MBS instance used for building modules. It must
+always contain `api_url` and `auth_method` properties. `auth_method` must be
+`kerberos` or `oidc`. When `auth_method` is `oidc`, additional
+`oidc_id_provider`, `oidc_client_id`, `oidc_client_secret`, and `oidc_scopes`
+properties must be provided. The values to use for the `mbs` sub-properties
+can be taken directly from the `[<profile>.mbs]` section of the appropriate
+`/etc/rpkg/<profile>.conf` (eg., `/etc/rpkg/centpkg.conf`) file.
+
+Example:
+
+```yaml
+destination:
+  scm: ssh://pkgs.example.com/
+  cache:
+    url: http://pkgs.example.com/repo
+    cgi: http://pkgs.example.com/lookaside/upload.cgi
+    path: "%(name)s/%(filename)s/%(hashtype)s/%(hash)s/%(filename)s"
+  profile: brew
+  mbs:
+    api_url: https://mbs.example.com/module-build-service/1/
+    auth_method: oidc
+    oidc_id_provider: https://id.example.com/openidc/
+    oidc_client_id: mbs-authorizer
+    oidc_client_secret: notsecret
+    oidc_scopes:
+      - openid
+      - https://id.example.com/scope/groups
+      - https://mbs.example.com/oidc/submit-build
+```
 
 ##### `trigger`
 
@@ -235,6 +279,8 @@ system can access.  Could be read-only.
 The `target` property defines the destination build system target.  Targets are
 buildroot and destination tag tuples.
 
+The `platform` property defines the destination module build system target platform in `<name>:<stream>` format.
+
 Example:
 
 ```yaml
@@ -242,6 +288,7 @@ build:
   prefix: git://pkgs.example.com/
   target: fluff-42.0.0-alpha-candidate
   scratch: false
+  platform: platform:fl42
 ```
 
 ##### `git`
@@ -311,8 +358,14 @@ or known and defined components that do not define these fields.
 The block is split into three identical sections, `cache` and the namespaces,
 `rpms` and `modules`.  Each holds two properties, `source` and `destination`.
 
-The values are old-style Python format strings formatted with `component` for
-the component name, and `stream` for the module stream name.
+The `modules` namespace section can also contain an `rpms` namespace
+sub-section with `source` and `destination` properties that will be applied to
+RPM sub-components of modules.
+
+The values are old-style Python format strings formatted with `%(component)s` for
+the component name, and `%(stream)s` for the module stream name.  Values in the
+`rpms` sub-section of the `modules` namespace can also use `%(name)s` for the
+module name, and `%(ref)s` for the modulemd-provided `ref`.
 
 Example:
 
@@ -327,6 +380,9 @@ defaults:
   modules:
     source: "%(component)s.git#%(stream)s"
     destination: "%(component)s.git#%(stream)s-fluff-42.0.0-alpha"
+    rpms:
+      source: "%(component)s.git"
+      destination: "%(component)s.git#stream-%(name)s-%(stream)s"
 ```
 
 #### `components`
@@ -338,6 +394,10 @@ unless overriden.
 
 Components may define their `source`, `destination` and `cache`.  Omitted
 fields are populated from the defaults.  See `configuration.defaults`.
+
+Components in the `modules` namespace may also contain an `rpms` sub-section
+that can define overriding `source`, `destination` and `cache` properties for
+specific RPM sub-components of that module.
 
 If components need to be defined explicitly (for instance for `strict: true`)
 without overriding any defaults, both an empty dictionary and null are valid.
@@ -386,6 +446,10 @@ cache:
 
 ## Development
 
+### Code style
+
+Please format code using `black -l 79`.
+
 ### Unit-testing
 
 Install packages required to test the python scripts:
@@ -393,7 +457,9 @@ Install packages required to test the python scripts:
 ```
 $ sudo dnf install -y \
     gcc \
+    cairo-gobject-devel \
     git \
+    gobject-introspection-devel \
     krb5-devel \
     libcurl-devel \
     openssl-devel \

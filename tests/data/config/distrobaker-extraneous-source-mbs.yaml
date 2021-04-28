@@ -6,6 +6,7 @@ configuration:
       cgi: https://src.fedoraproject.org/repo/pkgs/upload.cgi
       path: "%(name)s/%(filename)s/%(hashtype)s/%(hash)s/%(filename)s"
     profile: koji
+    mbs: https://this.needs.to.be.ignored
   destination:
     scm: ssh://pkgs.example.com/
     cache:
@@ -23,6 +24,9 @@ configuration:
         - openid
         - https://id.example.com/scope/groups
         - https://mbs.example.com/oidc/submit-build
+  trigger:
+    rpms: rawhide
+    modules: rawhide-modular
   build:
     prefix: git://pkgs.example.com/
     target: fluff-42.0.0-alpha-candidate
@@ -54,6 +58,9 @@ configuration:
     modules:
       source: "%(component)s.git#%(stream)s"
       destination: "%(component)s.git#%(stream)s-fluff-42.0.0-alpha"
+      rpms:
+        source: "%(component)s.git"
+        destination: "%(component)s.git#stream-%(name)s-%(stream)s"
     cache:
       source: "%(component)s"
       destination: "%(component)s"
@@ -70,3 +77,8 @@ components:
   modules:
     testmodule:master:
       destination: testmodule#stream-master-fluff-42.0.0-alpha-experimental
+      rpms:
+        componentrpm:
+          source: componentsource.git#sourcebranch
+          destination: coomponentrpm.git#fluff-42.0.0-alpha-experimental
+        anotherrpm: {}

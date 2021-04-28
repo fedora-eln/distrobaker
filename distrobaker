@@ -193,9 +193,6 @@ def main():
         )
     if args.oneshot:
         logger.info("Starting DistroBaker in the oneshot mode.")
-        logger.warning(
-            "Modules currently not implemented and will be ignored."
-        )
         chew(
             set(regex.split(r"\s+", args.select)) if args.select else set(),
             logger,
