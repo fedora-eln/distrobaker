@@ -560,24 +560,22 @@ def load_config(crepo):
     return c
 
 
-def clone_destination_repo(ns, comp, cdst, dscm, dirname):
+def clone_destination_repo(ns, comp, dscm, dirname):
     """Clone the component destination SCM repository to the given directory path.
     Git remote name 'origin' will be used.
 
     :param ns: The component namespace
     :param comp: The component name
-    :param cdst: The destination repository for the component
     :param dscm: The destination SCM
     :param dirname: Path to which the requested repository should be cloned
     :returns: repo, or None on error
     """
     logger.debug(
-        "Cloning %s/%s from %s/%s/%s",
+        "Cloning %s/%s from %s#%s",
         ns,
         comp,
-        c["main"]["destination"]["scm"],
-        ns,
-        cdst,
+        dscm["link"],
+        dscm["ref"],
     )
     for attempt in range(retry):
         try:
@@ -601,13 +599,12 @@ def clone_destination_repo(ns, comp, cdst, dscm, dirname):
     return repo
 
 
-def fetch_upstream_repo(ns, comp, csrc, sscm, repo):
+def fetch_upstream_repo(ns, comp, sscm, repo):
     """Fetch the component source SCM repository to the given git repo.
     Git remote name 'source' will be used.
 
     :param ns: The component namespace
     :param comp: The component name
-    :param csrc: The source repository for the component
     :param sscm: The source SCM
     :param repo: git Repo instance to which the repository should be fetched
     :returns: repo, or None on error
@@ -1191,14 +1188,14 @@ def sync_repo(
         pushrepo = True
     logger.debug("Using git repository directory: %s", gitdir)
 
-    repo = clone_destination_repo(ns, comp, cdst, dscm, gitdir)
+    repo = clone_destination_repo(ns, comp, dscm, gitdir)
     if repo is None:
         logger.error(
             "Failed to clone destination repo for %s/%s, skipping.", ns, comp
         )
         return None
 
-    if fetch_upstream_repo(ns, comp, csrc, sscm, repo) is None:
+    if fetch_upstream_repo(ns, comp, sscm, repo) is None:
         logger.error(
             "Failed to fetch upstream repo for %s/%s, skipping.", ns, comp
         )
