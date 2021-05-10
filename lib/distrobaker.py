@@ -282,7 +282,7 @@ def load_config(crepo):
                             # feedback if it isn't installed
                             try:
                                 import openidc_client  # noqa: F401
-                            except ImportError:
+                            except Exception:
                                 logger.exception(
                                     "python-openidc-client needs to be "
                                     "installed for %s.mbs.%s %s",
@@ -302,7 +302,7 @@ def load_config(crepo):
                             # feedback if it isn't installed
                             try:
                                 import requests_kerberos  # noqa: F401
-                            except ImportError:
+                            except Exception:
                                 logger.exception(
                                     "python-requests-kerberos needs to be "
                                     "installed for %s.mbs.%s %s",
