@@ -1445,6 +1445,9 @@ def build_comp(comp, ref, ns="rpms"):
             "The component %s/%s is excluded from sync, aborting.", ns, comp
         )
         return None
+    if not c["main"]["control"]["build"]:
+        logger.critical("Builds are disabled, aborting.")
+        return None
     logger.info("Processing build for %s/%s.", ns, comp)
     if not dry_run:
         bsys = get_buildsys("destination")
@@ -1686,18 +1689,25 @@ def process_message(msg):
                 return None
             scmurl = sync_repo(comp, ns=ns, nvr=nvr)
             if scmurl is not None:
-                scm = split_scmurl(scmurl)
-                task = build_comp(comp, scm["ref"], ns=ns)
-                if task is not None:
-                    logger.info(
-                        "Build submission of %s/%s complete, task %s, trigger processed.",
-                        ns,
-                        comp,
-                        task,
-                    )
+                if c["main"]["control"]["build"]:
+                    scm = split_scmurl(scmurl)
+                    task = build_comp(comp, scm["ref"], ns=ns)
+                    if task is not None:
+                        logger.info(
+                            "Build submission of %s/%s complete, task %s, trigger processed.",
+                            ns,
+                            comp,
+                            task,
+                        )
+                    else:
+                        logger.error(
+                            "Build submission of %s/%s failed, aborting trigger.",
+                            ns,
+                            comp,
+                        )
                 else:
-                    logger.error(
-                        "Build submission of %s/%s failed, aborting trigger.",
+                    logger.info(
+                        "Builds are disabled, no build attempted for %s/%s, trigger processed.",
                         ns,
                         comp,
                     )
