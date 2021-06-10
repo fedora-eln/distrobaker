@@ -1454,10 +1454,10 @@ def build_comp(comp, ref, ns="rpms"):
     buildcomp = comp
     if comp in c["comps"][ns]:
         buildcomp = split_scmurl(c["comps"][ns][comp]["destination"])["comp"]
-    buildscmurl = "{}/{}/{}#{}".format(
-        c["main"]["build"]["prefix"], ns, buildcomp, ref
-    )
     if ns == "rpms":
+        buildscmurl = "{}/{}/{}#{}".format(
+            c["main"]["build"]["prefix"], ns, buildcomp, ref
+        )
         try:
             if not dry_run:
                 task = bsys.build(
@@ -1490,7 +1490,10 @@ def build_comp(comp, ref, ns="rpms"):
             )
             return None
     elif ns == "modules":
-        ms = split_module(comp)
+        ms = split_module(buildcomp)
+        buildscmurl = "{}/{}/{}#{}".format(
+            c["main"]["build"]["prefix"], ns, ms["name"], ref
+        )
         ps = split_module(c["main"]["build"]["platform"])
         body = {
             "scmurl": buildscmurl,
