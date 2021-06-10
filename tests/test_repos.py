@@ -6,6 +6,7 @@ import logging
 import os
 import subprocess
 import tempfile
+import time
 
 from parameterized import parameterized
 
@@ -132,6 +133,11 @@ class TestRepos(unittest.TestCase):
             baserepo = dst_repo
         else:
             baserepo = None
+            # Delay a second to avoid a race condition that can result in
+            # both repos ending up with the same initial commit hash which
+            # can cause unexpected results by making them appear to have
+            # common history!
+            time.sleep(1)
         _setup_repo(
             src_repo,
             base=baserepo,
@@ -325,7 +331,7 @@ class TestRepos(unittest.TestCase):
                     repo,
                     self.bscm,
                 )
-            expected_error = "Not possible to fast-forward"
+            expected_error = "refusing to merge unrelated histories"
             self.assertTrue(
                 helpers.strings_with_substring(cm.output, expected_error),
                 msg="'{}' not found in logger output: {}".format(
