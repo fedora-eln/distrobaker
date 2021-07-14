@@ -6,10 +6,17 @@ import tempfile
 import datetime
 
 import git
+import json
 import koji
 import pyrpkg
 import regex
+import requests
 import yaml
+
+import gi
+
+gi.require_version("Modulemd", "2.0")
+from gi.repository import Modulemd  # noqa: E402
 
 # Global logger
 logger = logging.getLogger(__name__)
@@ -253,10 +260,87 @@ def load_config(crepo):
                     logger.error("Configuration error: %s.profile missing.", k)
                     return None
                 if "mbs" in cnf[k]:
-                    n[k]["mbs"] = str(cnf[k]["mbs"])
+                    # MBS properties are only relevant for the destination
+                    if k == "destination":
+                        if not isinstance(cnf[k]["mbs"], dict):
+                            logger.error(
+                                "Configuration error: %s.mbs must be a mapping.",
+                                k,
+                            )
+                            return None
+                        if "auth_method" not in cnf[k]["mbs"]:
+                            logger.error(
+                                "Configuration error: %s.mbs.%s is missing.",
+                                k,
+                                "auth_method",
+                            )
+                            return None
+                        mbs_auth_method = str(cnf[k]["mbs"]["auth_method"])
+                        mbs_required_configs = ["auth_method", "api_url"]
+                        if mbs_auth_method == "oidc":
+                            # Try to import this now so the user gets immediate
+                            # feedback if it isn't installed
+                            try:
+                                import openidc_client  # noqa: F401
+                            except Exception:
+                                logger.exception(
+                                    "python-openidc-client needs to be "
+                                    "installed for %s.mbs.%s %s",
+                                    k,
+                                    "auth_method",
+                                    mbs_auth_method,
+                                )
+                                return None
+                            mbs_required_configs += [
+                                "oidc_id_provider",
+                                "oidc_client_id",
+                                "oidc_client_secret",
+                                "oidc_scopes",
+                            ]
+                        elif mbs_auth_method == "kerberos":
+                            # Try to import this now so the user gets immediate
+                            # feedback if it isn't installed
+                            try:
+                                import requests_kerberos  # noqa: F401
+                            except Exception:
+                                logger.exception(
+                                    "python-requests-kerberos needs to be "
+                                    "installed for %s.mbs.%s %s",
+                                    k,
+                                    "auth_method",
+                                    mbs_auth_method,
+                                )
+                                return None
+                        else:
+                            logger.error(
+                                "Configuration error: %s.mbs.%s %s is unsupported.",
+                                k,
+                                "auth_method",
+                                mbs_auth_method,
+                            )
+                            return None
+                        n[k]["mbs"] = dict()
+                        for r in mbs_required_configs:
+                            if r not in cnf[k]["mbs"]:
+                                logger.error(
+                                    "Configuration error: %s.mbs.%s is required when %s is %s.",
+                                    k,
+                                    r,
+                                    "auth_method",
+                                    mbs_auth_method,
+                                )
+                                return None
+                            n[k]["mbs"][r] = cnf[k]["mbs"][r]
+                    else:
+                        logger.warning(
+                            "Configuration warning: %s.mbs is extraneous, ignoring.",
+                            k,
+                        )
                 else:
-                    logger.error("Configuration error: %s.mbs missing.", k)
-                    return None
+                    # MBS properties required for destination
+                    if k == "destination":
+                        logger.error("Configuration error: %s.mbs missing.", k)
+                        return None
             else:
                 logger.error("Configuration error: %s missing.", k)
                 return None
@@ -272,7 +356,7 @@ def load_config(crepo):
             return None
         if "build" in cnf:
             n["build"] = dict()
-            for k in ("prefix", "target"):
+            for k in ("prefix", "target", "platform"):
                 if k in cnf["build"]:
                     n["build"][k] = str(cnf["build"][k])
                 else:
@@ -285,6 +369,13 @@ def load_config(crepo):
                     "Configuration warning: build.scratch not defined, assuming false."
                 )
                 n["build"]["scratch"] = False
+            if ":" not in n["build"]["platform"]:
+                logger.error(
+                    "Configuration error: build.%s.%s must be in name:stream format.",
+                    k,
+                    "platform",
+                )
+                return None
         else:
             logger.error("Configuration error: build missing.")
             return None
@@ -350,6 +441,29 @@ def load_config(crepo):
                         "Configuration error: defaults.%s missing.", dk
                     )
                     return None
+            # parse defaults for module sub-components
+            for dk in ("rpms",):
+                n["defaults"]["modules"][dk] = dict()
+                for dkk in ("source", "destination"):
+                    if (
+                        dk in cnf["defaults"]["modules"]
+                        and dkk in cnf["defaults"]["modules"][dk]
+                    ):
+                        n["defaults"]["modules"][dk][dkk] = cnf["defaults"][
+                            "modules"
+                        ][dk][dkk]
+                    else:
+                        logger.warning(
+                            "Configuration warning: defaults.modules.%s.%s "
+                            "not defined, using value from defaults.%s.%s",
+                            dk,
+                            dkk,
+                            dk,
+                            dkk,
+                        )
+                        n["defaults"]["modules"][dk][dkk] = str(
+                            n["defaults"][dk][dkk]
+                        )
         else:
             logger.error("Configuration error: defaults missing.")
             return None
@@ -380,7 +494,10 @@ def load_config(crepo):
                     }
                     nc[k][p]["destination"] = n["defaults"][k][
                         "destination"
-                    ] % {"component": cname, "stream": sname}
+                    ] % {
+                        "component": cname,
+                        "stream": sname,
+                    }
                     nc[k][p]["cache"] = {
                         "source": n["defaults"]["cache"]["source"]
                         % {"component": cname, "stream": sname},
@@ -398,6 +515,26 @@ def load_config(crepo):
                                 nc[k][p]["cache"][ck] = str(
                                     cnf[k][p]["cache"][ck]
                                 )
+                    if k == "modules":
+                        # parse overrides for module sub-components
+                        for cn in ("rpms",):
+                            nc[k][p][cn] = dict()
+                            if cn in cnf[k][p]:
+                                for cp in cnf[k][p][cn].keys():
+                                    nc[k][p][cn][cp] = dict()
+                                    for ck in ("source", "destination"):
+                                        nc[k][p][cn][cp][ck] = n["defaults"][
+                                            k
+                                        ][cn][ck] % {
+                                            "component": cp,
+                                            "name": cname,
+                                            "ref": "%(ref)s",
+                                            "stream": sname,
+                                        }
+                                        if ck in cnf[k][p][cn][cp]:
+                                            nc[k][p][cn][cp][ck] = cnf[k][p][
+                                                cn
+                                            ][cp][ck]
             logger.info(
                 "Found %d configured component(s) in the %s namespace.",
                 len(nc[k]),
@@ -423,24 +560,22 @@ def load_config(crepo):
     return c
 
 
-def clone_destination_repo(ns, comp, cdst, dscm, dirname):
+def clone_destination_repo(ns, comp, dscm, dirname):
     """Clone the component destination SCM repository to the given directory path.
     Git remote name 'origin' will be used.
 
     :param ns: The component namespace
     :param comp: The component name
-    :param cdst: The destination repository for the component
     :param dscm: The destination SCM
     :param dirname: Path to which the requested repository should be cloned
     :returns: repo, or None on error
     """
     logger.debug(
-        "Cloning %s/%s from %s/%s/%s",
+        "Cloning %s/%s from %s#%s",
         ns,
         comp,
-        c["main"]["destination"]["scm"],
-        ns,
-        cdst,
+        dscm["link"],
+        dscm["ref"],
     )
     for attempt in range(retry):
         try:
@@ -464,13 +599,12 @@ def clone_destination_repo(ns, comp, cdst, dscm, dirname):
     return repo
 
 
-def fetch_upstream_repo(ns, comp, csrc, sscm, repo):
+def fetch_upstream_repo(ns, comp, sscm, repo):
     """Fetch the component source SCM repository to the given git repo.
     Git remote name 'source' will be used.
 
     :param ns: The component namespace
     :param comp: The component name
-    :param csrc: The source repository for the component
     :param sscm: The source SCM
     :param repo: git Repo instance to which the repository should be fetched
     :returns: repo, or None on error
@@ -486,9 +620,9 @@ def fetch_upstream_repo(ns, comp, csrc, sscm, repo):
     for attempt in range(retry):
         try:
             if sscm["ref"]:
-                repo.git.fetch("source", sscm["ref"])
+                repo.git.fetch("--tags", "source", sscm["ref"])
             else:
-                repo.git.fetch("--all")
+                repo.git.fetch("--tags", "--all")
         except Exception:
             logger.warning(
                 "Fetching upstream attempt #%d/%d failed, retrying.",
@@ -581,17 +715,45 @@ def sync_repo_merge(ns, comp, repo, bscm, sscm, dscm):
             break
     else:
         logger.error(
-            "Exhausted attempts finding an unused branch name while synchronizing %s/%s;"
-            "this is very rare, congratulations.  Skipping.",
+            "Exhausted attempts finding an unused branch name while synchronizing %s/%s; "
+            "this is very rare, congratulations.",
             ns,
             comp,
         )
         return None
+
+    logger.debug(
+        "Locating build branch reference for %s/%s.",
+        ns,
+        comp,
+    )
+    # if syncing a named branch present in both source and destination, make
+    # sure we merge from the source; otherwise it's likely a commit hash
+    for bref in ("source/{}".format(bscm["ref"]), bscm["ref"]):
+        try:
+            repo.git.rev_parse("--quiet", bref, "--")
+            break
+        except Exception:
+            continue
+    else:
+        logger.error(
+            "Cannot locate build branch reference while synchronizing %s/%s.",
+            ns,
+            comp,
+        )
+        return None
+    logger.debug(
+        "Using build branch reference %s while synchronizing %s/%s.",
+        bref,
+        ns,
+        comp,
+    )
+
     try:
         actor = "{} <{}>".format(
             c["main"]["git"]["author"], c["main"]["git"]["email"]
         )
-        repo.git.checkout(bscm["ref"])
+        repo.git.checkout(bref)
         repo.git.switch("-c", bname)
         repo.git.merge(
             "--allow-unrelated-histories",
@@ -645,7 +807,7 @@ def sync_repo_pull(ns, comp, repo, bscm):
         comp,
     )
     try:
-        repo.git.pull("--ff-only", "source", bscm["ref"])
+        repo.git.pull("--ff-only", "--tags", "source", bscm["ref"])
     except Exception:
         logger.exception(
             "Failed to perform a clean pull for %s/%s, skipping.", ns, comp
@@ -665,16 +827,23 @@ def repo_push(ns, comp, repo, dscm):
     :returns: repo, or None on error
     """
     logger.debug("Pushing synchronized contents for %s/%s.", ns, comp)
+
     for attempt in range(retry):
         try:
             if not dry_run:
                 logger.debug("Pushing %s/%s.", ns, comp)
-                repo.git.push("--set-upstream", "origin", dscm["ref"])
+                repo.git.push(
+                    "--tags", "--set-upstream", "origin", dscm["ref"]
+                )
                 logger.debug("Successfully pushed %s/%s.", ns, comp)
             else:
                 logger.debug("Pushing %s/%s (--dry-run).", ns, comp)
                 repo.git.push(
-                    "--dry-run", "--set-upstream", "origin", dscm["ref"]
+                    "--dry-run",
+                    "--tags",
+                    "--set-upstream",
+                    "origin",
+                    dscm["ref"],
                 )
                 logger.debug(
                     "Successfully pushed %s/%s (--dry-run).", ns, comp
@@ -694,17 +863,188 @@ def repo_push(ns, comp, repo, dscm):
         return None
 
 
-def sync_repo(comp, ns="rpms", nvr=None):
+def sync_module_components(comp, nvr, modulemd=None):
+    """Synchronizes the SCM repositories for the components of the given module.
+
+    :param comp: The modular component name
+    :param nvr: NVR of module to synchronize
+    :param modulemd: Optional modulemd for module from build system
+    :returns: True if successful, or False on error
+    """
+    logger.debug("Synchronizing components for module %s: %s", comp, nvr)
+
+    if "main" not in c:
+        logger.critical("DistroBaker is not configured, aborting.")
+        return False
+    if nvr is None:
+        logger.error(
+            "NVR not specified for module %s",
+            comp,
+        )
+        return False
+    if modulemd is None:
+        logger.debug(
+            "Retrieving modulemd for module %s: %s",
+            comp,
+            nvr,
+        )
+        bsys = get_buildsys("source")
+        if bsys is None:
+            logger.error(
+                "Build system unavailable, cannot retrieve the module info for %s.",
+                nvr,
+            )
+            return False
+        try:
+            bsrc = bsys.getBuild(nvr)
+        except Exception:
+            logger.exception(
+                "An error occured while retrieving the module info for %s.",
+                nvr,
+            )
+            return False
+        try:
+            minfo = bsrc["extra"]["typeinfo"]["module"]
+            modulemd = minfo["modulemd_str"]
+        except Exception:
+            logger.error("Cannot retrieve module info for %s.", nvr)
+            return False
+        logger.debug("Modulemd for %s: %s", nvr, modulemd)
+
+    mmd = Modulemd.read_packager_string(modulemd)
+    if not isinstance(mmd, Modulemd.ModuleStreamV2):
+        logger.error(
+            "Unable to parse module metadata string for %s: %s", nvr, modulemd
+        )
+        return False
+
+    gitdirs = dict(rpms=dict(), modules=dict())
+    scmurls = dict(rpms=dict(), modules=dict())
+
+    mcomps = mmd.get_rpm_component_names()
+    logger.debug("Module has %d RPM components", len(mcomps))
+    for mc in mcomps:
+        logger.debug("RPM component: %s", mc)
+        compinfo = mmd.get_rpm_component(mc)
+        crepo = compinfo.get_repository()
+        ccache = compinfo.get_cache()
+        cref = compinfo.get_ref()
+        # TODO: do we actually need the ref MBS stored in the xmd?
+        try:
+            xref = mmd.get_xmd()["mbs"]["rpms"][mc]["ref"]
+        except Exception:
+            xref = None
+        logger.debug("  repo: %s", crepo)
+        logger.debug("  cache: %s", ccache)
+        logger.debug("  ref: %s", cref)
+        logger.debug("  xmd ref: %s", xref)
+        gitdirs["rpms"][mc] = tempfile.TemporaryDirectory(
+            prefix="mcrepo-{}-{}-{}-".format(comp, "rpms", mc)
+        )
+        logger.debug(
+            "Temporary directory created: %s", gitdirs["rpms"][mc].name
+        )
+
+        if cref is not None:
+            cscmurl = "{}#{}".format(crepo, cref)
+        else:
+            cscmurl = crepo
+
+        scmurls["rpms"][mc] = sync_repo(
+            mc,
+            "rpms",
+            gitdir=gitdirs["rpms"][mc].name,
+            cmodule=comp,
+            scmurl=cscmurl,
+            bcache=ccache,
+        )
+        if scmurls["rpms"][mc] is None:
+            logger.error(
+                "Synchronization of component %s/%s failed, aborting module sync.",
+                "rpms",
+                mc,
+            )
+            return False
+
+    mcomps = mmd.get_module_component_names()
+    logger.debug("Module has %d module components", len(mcomps))
+    for mc in mcomps:
+        logger.debug("Module component: %s", mc)
+        compinfo = mmd.get_module_component(mc)
+        crepo = compinfo.get_repository()
+        cref = compinfo.get_ref()
+        # TODO: do we actually need the ref MBS stored in the xmd?
+        # does it even exist for bundled modules?
+        try:
+            xref = mmd.get_xmd()["mbs"]["modules"][mc]["ref"]
+        except Exception:
+            xref = None
+        logger.debug("  repo: %s", crepo)
+        logger.debug("  ref: %s", cref)
+        logger.debug("  xmd ref: %s", xref)
+        gitdirs["modules"][mc] = tempfile.TemporaryDirectory(
+            prefix="mcrepo-{}-{}-{}-".format(comp, "modules", mc)
+        )
+        logger.debug(
+            "Temporary directory created: %s", gitdirs["modules"][mc].name
+        )
+        # TODO some day: implement syncing of module component repos
+        scmurls["modules"][mc] = None  # sync_repo(...)
+        logger.critical(
+            "Module %s: synchronization not yet implemented for component module %s, aborting.",
+            comp,
+            mc,
+        )
+        return True
+
+    # if all the component syncs succeeded, push all the repos
+    for ns in ("rpms", "modules"):
+        for mc in gitdirs[ns].keys():
+            repo = git.Repo(gitdirs[ns][mc].name)
+            dscm = split_scmurl(scmurls[ns][mc])
+            if repo_push(ns, mc, repo, dscm) is None:
+                logger.error(
+                    "Module %s: failed to push component %s/%s, skipping.",
+                    comp,
+                    ns,
+                    mc,
+                )
+                return False
+
+    return True
+
+
+def sync_repo(
+    comp,
+    ns="rpms",
+    nvr=None,
+    gitdir=None,
+    cmodule=None,
+    scmurl=None,
+    bcache=None,
+):
     """Synchronizes the component SCM repository for the given NVR.
     If no NVR is provided, finds the latest build in the corresponding
     trigger tag.
 
     Calls sync_cache() if required.  Does not call build_comp().
 
-    :param comp: The component name
-    :param ns: The component namespace
-    :param nvr: Optional NVR to synchronize
-    :returns: The SCM reference of the final synchronized commit, or None on error
+    :param comp: The component name.
+    :param ns: The component namespace.
+    :param nvr: Optional NVR to synchronize.
+    :param gitdir: Optional empty directory to use as git repository directory
+    which will NOT be pushed. If not specified, a temporary git repository
+    directory will be created and the repository WILL be pushed.
+    :param cmodule: Optional containing module name:stream. Must be specified
+    if and only if syncing module RPM components.
+    :param scmurl: Optional URL of custom source component repository. Must be
+    specified if and only if syncing module RPM components. If not specified, the
+    configuration default location is used.
+    :param bcache: Optional URL of custom source lookaside cache. If not
+    specified, the configuration default location is used.
+    :returns: The desination SCM URL of the final synchronized commit (if
+    gitdir not specified) or branch to push to (if gitdir provided). None on
+    error.
     """
     if "main" not in c:
         logger.critical("DistroBaker is not configured, aborting.")
@@ -717,42 +1057,108 @@ def sync_repo(comp, ns="rpms", nvr=None):
 
     logger.info("Synchronizing SCM for %s/%s.", ns, comp)
 
-    nvr = nvr if nvr else get_build(comp, ns=ns)
-    if nvr is None:
-        logger.error(
-            "NVR not specified and no builds for %s/%s could be found, skipping.",
-            ns,
-            comp,
-        )
-        return None
+    if scmurl:
+        bscmurl = scmurl
+        bmmd = None
+    else:
+        nvr = nvr if nvr else get_build(comp, ns=ns)
+        if nvr is None:
+            logger.error(
+                "NVR not specified and no builds for %s/%s could be found, skipping.",
+                ns,
+                comp,
+            )
+            return None
+        binfo = get_build_info(nvr)
+        if binfo is None:
+            logger.error(
+                "Could not find build SCMURL for %s/%s: %s, skipping.",
+                ns,
+                comp,
+                nvr,
+            )
+            return None
+        bscmurl = binfo["scmurl"]
+        bmmd = binfo["modulemd"]
+
+    bscm = split_scmurl(bscmurl)
+    bscm["ref"] = bscm["ref"] if bscm["ref"] else "master"
+
+    if scmurl:
+        if bscm["link"] != c["main"]["source"]["scm"]:
+            # TODO: this never matches; make the check useful
+            logger.warning(
+                "The custom source SCM URL for %s/%s (%s) doesn't match "
+                "configuration (%s), ignoring.",
+                ns,
+                comp,
+                bscm["link"],
+                c["main"]["source"]["scm"],
+            )
+
+    if cmodule and nvr is None:
+        # when syncing module RPM components, assign a dummy nvr in comp:branch
+        # format that is used only for log messages
+        nvr = "{}:{}".format(comp, bscm["ref"])
 
     logger.debug("Processing %s/%s: %s", ns, comp, nvr)
 
-    tempdir = tempfile.TemporaryDirectory(
-        prefix="repo-{}-{}-".format(ns, comp)
-    )
-    logger.debug("Temporary directory created: %s", tempdir.name)
+    logger.debug("Build SCMURL for %s/%s: %s", ns, comp, bscmurl)
 
-    bscm = get_scmurl(nvr)
-    if bscm is None:
-        logger.error(
-            "Could not find build SCMURL for %s/%s: %s, skipping.",
-            ns,
-            comp,
-            nvr,
-        )
-        return None
-    bscm = split_scmurl(bscm)
-    if comp in c["comps"][ns]:
-        csrc = c["comps"][ns][comp]["source"]
-        cdst = c["comps"][ns][comp]["destination"]
+    if ns == "modules":
+        ms = split_module(comp)
+        cname = ms["name"]
+        sname = ms["stream"]
     else:
         cname = comp
         sname = ""
+
+    if cmodule:
         if ns == "modules":
-            ms = split_module(comp)
-            cname = ms["name"]
-            sname = ms["stream"]
+            logger.critical(
+                "Synchronizing module subcomponent (%s/%s) of module (%s) is not yet supported.",
+                ns,
+                comp,
+                cmodule,
+            )
+            return None
+
+        # check for module subcomponent overrides
+        if (
+            cmodule in c["comps"]["modules"]
+            and comp in c["comps"]["modules"][cmodule][ns]
+        ):
+            csrc = c["comps"]["modules"][cmodule][ns][comp]["source"]
+            cdst = c["comps"]["modules"][cmodule][ns][comp]["destination"]
+        else:
+            csrc = c["main"]["defaults"]["modules"][ns]["source"]
+            cdst = c["main"]["defaults"]["modules"][ns]["destination"]
+
+        # append #ref if not already present
+        if "#" not in csrc:
+            csrc += "#%(ref)s"
+        if "#" not in cdst:
+            cdst += "#%(ref)s"
+
+        # when syncing module RPM components, ref is the stream branch from build
+        # TODO: do we also need a mapped key for the component's stream?
+        cms = split_module(cmodule)
+        csrc = csrc % {
+            "component": cname,
+            "name": cms["name"],
+            "ref": bscm["ref"],
+            "stream": cms["stream"],
+        }
+        cdst = cdst % {
+            "component": cname,
+            "name": cms["name"],
+            "ref": bscm["ref"],
+            "stream": cms["stream"],
+        }
+    elif comp in c["comps"][ns]:
+        csrc = c["comps"][ns][comp]["source"]
+        cdst = c["comps"][ns][comp]["destination"]
+    else:
         csrc = c["main"]["defaults"][ns]["source"] % {
             "component": cname,
             "stream": sname,
@@ -769,14 +1175,27 @@ def sync_repo(comp, ns="rpms", nvr=None):
     )
     dscm["ref"] = dscm["ref"] if dscm["ref"] else "master"
 
-    repo = clone_destination_repo(ns, comp, cdst, dscm, tempdir.name)
+    if gitdir:
+        # if a git repo directory was provided, don't do pushes since they
+        # will be handled by the caller
+        pushrepo = False
+    else:
+        tempdir = tempfile.TemporaryDirectory(
+            prefix="repo-{}-{}-".format(ns, comp)
+        )
+        logger.debug("Temporary directory created: %s", tempdir.name)
+        gitdir = tempdir.name
+        pushrepo = True
+    logger.debug("Using git repository directory: %s", gitdir)
+
+    repo = clone_destination_repo(ns, comp, dscm, gitdir)
     if repo is None:
         logger.error(
             "Failed to clone destination repo for %s/%s, skipping.", ns, comp
         )
         return None
 
-    if fetch_upstream_repo(ns, comp, csrc, sscm, repo) is None:
+    if fetch_upstream_repo(ns, comp, sscm, repo) is None:
         logger.error(
             "Failed to fetch upstream repo for %s/%s, skipping.", ns, comp
         )
@@ -827,7 +1246,7 @@ def sync_repo(comp, ns="rpms", nvr=None):
     srcdiff = ssrc - dsrc
     if srcdiff:
         logger.debug("Source files for %s/%s differ.", ns, comp)
-        if sync_cache(comp, srcdiff, ns) is None:
+        if sync_cache(comp, srcdiff, ns, scacheurl=bcache) is None:
             logger.error(
                 "Failed to synchronize sources for %s/%s, skipping.", ns, comp
             )
@@ -837,15 +1256,27 @@ def sync_repo(comp, ns="rpms", nvr=None):
 
     logger.debug("Component %s/%s successfully synchronized.", ns, comp)
 
-    if repo_push(ns, comp, repo, dscm) is None:
-        logger.error("Failed to push %s/%s, skipping.", ns, comp)
-        return None
+    if ns == "modules":
+        if not sync_module_components(comp, nvr, bmmd):
+            logger.error(
+                "Failed to sync module components for %s/%s, skipping.",
+                ns,
+                comp,
+            )
+            return None
 
-    logger.info("Successfully synchronized %s/%s.", ns, comp)
-    return repo.git.rev_parse("HEAD")
+    if pushrepo:
+        if repo_push(ns, comp, repo, dscm) is None:
+            logger.error("Failed to push %s/%s, skipping.", ns, comp)
+            return None
+        logger.info("Successfully synchronized %s/%s.", ns, comp)
+        return "{}#{}".format(dscm["link"], repo.git.rev_parse("HEAD"))
+    else:
+        logger.info("Successfully synchronized %s/%s without push", ns, comp)
+        return "{}#{}".format(dscm["link"], dscm["ref"])
 
 
-def sync_cache(comp, sources, ns="rpms"):
+def sync_cache(comp, sources, ns="rpms", scacheurl=None):
     """Synchronizes lookaside cache contents for the given component.
     Expects a set of (filename, hash, hastype) tuples to synchronize, as
     returned by parse_sources().
@@ -853,6 +1284,8 @@ def sync_cache(comp, sources, ns="rpms"):
     :param comp: The component name
     :param sources: The set of source tuples
     :param ns: The component namespace
+    :param scacheurl: Optional source lookaside cache url for modular RPM
+    components
     :returns: The number of files processed, or None on error
     """
     if "main" not in c:
@@ -866,6 +1299,16 @@ def sync_cache(comp, sources, ns="rpms"):
     logger.debug(
         "Synchronizing %d cache file(s) for %s/%s.", len(sources), ns, comp
     )
+    if scacheurl:
+        if scacheurl != c["main"]["source"]["cache"]["url"]:
+            logger.warning(
+                "The custom source lookaside cache URL for %s/%s (%s) doesn't "
+                "match configuration (%s), ignoring.",
+                ns,
+                comp,
+                scacheurl,
+                c["main"]["source"]["cache"]["url"],
+            )
     scache = pyrpkg.lookaside.CGILookasideCache(
         "sha512",
         c["main"]["source"]["cache"]["url"],
@@ -897,7 +1340,8 @@ def sync_cache(comp, sources, ns="rpms"):
                     "{}/{}".format(ns, dcname), s[0], s[1]
                 ):
                     logger.debug(
-                        "File %s for %s/%s (%s/%s) not available in the destination cache, downloading.",
+                        "File %s for %s/%s (%s/%s) not available in the "
+                        "destination cache, downloading.",
                         s[0],
                         ns,
                         comp,
@@ -927,7 +1371,8 @@ def sync_cache(comp, sources, ns="rpms"):
                             s[1],
                         )
                         logger.debug(
-                            "File %s for %s/%s (%s/%s) )successfully uploaded to the destination cache.",
+                            "File %s for %s/%s (%s/%s) )successfully uploaded "
+                            "to the destination cache.",
                             s[0],
                             ns,
                             comp,
@@ -968,7 +1413,8 @@ def sync_cache(comp, sources, ns="rpms"):
                 break
         else:
             logger.error(
-                "Exhausted lookaside cache synchronization attempts for %s/%s while working on %s, skipping.",
+                "Exhausted lookaside cache synchronization attempts for %s/%s "
+                "while working on %s, skipping.",
                 ns,
                 comp,
                 s[0],
@@ -988,7 +1434,8 @@ def build_comp(comp, ref, ns="rpms"):
     :param comp: The component name
     :param ref: The SCM reference
     :param ns: The component namespace
-    :returns: The build system task ID, or None on error
+    :returns: The build system task ID for RPMS, the module build ID for
+    modules, or None on error
     """
     if "main" not in c:
         logger.critical("DistroBaker is not configured, aborting.")
@@ -998,68 +1445,184 @@ def build_comp(comp, ref, ns="rpms"):
             "The component %s/%s is excluded from sync, aborting.", ns, comp
         )
         return None
+    if not c["main"]["control"]["build"]:
+        logger.critical("Builds are disabled, aborting.")
+        return None
     logger.info("Processing build for %s/%s.", ns, comp)
-    if ns == "rpms":
+    if not dry_run:
         bsys = get_buildsys("destination")
-        buildcomp = comp
-        if comp in c["comps"][ns]:
-            buildcomp = split_scmurl(c["comps"][ns][comp]["destination"])[
-                "comp"
-            ]
+    buildcomp = comp
+    if comp in c["comps"][ns]:
+        buildcomp = split_scmurl(c["comps"][ns][comp]["destination"])["comp"]
+    if ns == "rpms":
+        buildscmurl = "{}/{}/{}#{}".format(
+            c["main"]["build"]["prefix"], ns, buildcomp, ref
+        )
         try:
             if not dry_run:
                 task = bsys.build(
-                    "{}/{}/{}#{}".format(
-                        c["main"]["build"]["prefix"], ns, buildcomp, ref
-                    ),
+                    buildscmurl,
                     c["main"]["build"]["target"],
                     {"scratch": c["main"]["build"]["scratch"]},
                 )
                 logger.debug(
-                    "Build submitted for %s/%s; task %d; SCMURL: %s/%s/%s#%s.",
+                    "Build submitted for %s/%s; task %d; SCMURL: %s.",
                     ns,
                     comp,
                     task,
-                    c["main"]["build"]["prefix"],
-                    ns,
-                    buildcomp,
-                    ref,
+                    buildscmurl,
                 )
             else:
                 task = 0
                 logger.info(
-                    "Running in the dry mode, not submitting any builds for %s/%s (%s/%s/%s#%s).",
+                    "Running in the dry mode, not submitting any builds for %s/%s (%s).",
                     ns,
                     comp,
-                    c["main"]["build"]["prefix"],
-                    ns,
-                    buildcomp,
-                    ref,
+                    buildscmurl,
                 )
             return task
         except Exception:
             logger.exception(
-                "Failed submitting build for %s/%s (%s/%s/%s#%s).",
+                "Failed submitting build for %s/%s (%s).",
                 ns,
                 comp,
-                c["main"]["build"]["prefix"],
-                ns,
-                comp,
-                ref,
+                buildscmurl,
             )
             return None
     elif ns == "modules":
-        logger.critical(
-            "Cannot build %s/%s; module building not implemented.", ns, comp
+        ms = split_module(buildcomp)
+        buildscmurl = "{}/{}/{}#{}".format(
+            c["main"]["build"]["prefix"], ns, ms["name"], ref
         )
-        return None
+        ps = split_module(c["main"]["build"]["platform"])
+        body = {
+            "scmurl": buildscmurl,
+            "branch": ms["stream"],
+            "buildrequire_overrides": {ps["name"]: [ps["stream"]]},
+            "scratch": c["main"]["build"]["scratch"],
+        }
+        request_url = "{}/{}/".format(
+            c["main"]["destination"]["mbs"]["api_url"], "module-builds"
+        )
+        logger.debug(
+            "Body of build request for %s/%s to POST to %s using auth_method %s: %s",
+            ns,
+            comp,
+            request_url,
+            c["main"]["destination"]["mbs"]["auth_method"],
+            body,
+        )
+
+        if not dry_run:
+            if c["main"]["destination"]["mbs"]["auth_method"] == "kerberos":
+                try:
+                    import requests_kerberos
+
+                    data = json.dumps(body)
+                    auth = requests_kerberos.HTTPKerberosAuth(
+                        mutual_authentication=requests_kerberos.OPTIONAL,
+                    )
+                    resp = requests.post(request_url, data=data, auth=auth)
+                except Exception:
+                    logger.exception(
+                        "Failed submitting build for %s/%s (%s).",
+                        ns,
+                        comp,
+                        buildscmurl,
+                    )
+                    return None
+
+            elif c["main"]["destination"]["mbs"]["auth_method"] == "oidc":
+                try:
+                    import openidc_client
+
+                    mapping = {
+                        "Token": "Token",
+                        "Authorization": "Authorization",
+                    }
+                    # Get the auth token using the OpenID client
+                    oidc = openidc_client.OpenIDCClient(
+                        "mbs_build",
+                        c["main"]["destination"]["mbs"]["oidc_id_provider"],
+                        mapping,
+                        c["main"]["destination"]["mbs"]["oidc_client_id"],
+                        c["main"]["destination"]["mbs"]["oidc_client_secret"],
+                    )
+                    resp = oidc.send_request(
+                        request_url,
+                        http_method="POST",
+                        json=body,
+                        scopes=c["main"]["destination"]["mbs"]["oidc_scopes"],
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed submitting build for %s/%s (%s).",
+                        ns,
+                        comp,
+                        buildscmurl,
+                    )
+                    return None
+            else:
+                logger.critical(
+                    "Cannot build %s/%s; unknown auth_method: %s",
+                    ns,
+                    comp,
+                    c["main"]["destination"]["mbs"]["auth_method"],
+                )
+                return None
+
+            logger.debug(
+                "Build request for %s/%s (%s) returned status %d.",
+                ns,
+                comp,
+                buildscmurl,
+                resp.status_code,
+            )
+            if resp.status_code == 401:
+                logger.critical(
+                    "Cannot build %s/%s: MBS authentication failed using auth_method %s. "
+                    "Make sure you have a valid ticket/token.",
+                    ns,
+                    comp,
+                    c["main"]["destination"]["mbs"]["auth_method"],
+                )
+                return None
+            elif not resp.ok:
+                logger.critical(
+                    "Cannot build %s/%s: request failed with: %s",
+                    ns,
+                    comp,
+                    resp.text,
+                )
+                return None
+
+            rdata = resp.json()
+            build = rdata[0] if isinstance(rdata, list) else rdata
+            buildid = build["id"]
+            logger.debug(
+                "Build submitted for %s/%s; buildid %d; SCMURL: %s.",
+                ns,
+                comp,
+                buildid,
+                buildscmurl,
+            )
+            return buildid
+
+        else:
+            logger.info(
+                "Running in the dry mode, not submitting any builds for %s/%s (%s).",
+                ns,
+                comp,
+                buildscmurl,
+            )
+            return 0
     else:
         logger.critical("Cannot build %s/%s; unknown namespace.", ns, comp)
         return None
 
 
 def process_message(msg):
-    """Processes a fedora-messaging messages.  We can only handle Koji
+    """Processes a fedora-messaging message.  We can only handle Koji
     tagging events; messaging should be configured properly.
 
     If the message is recognized and matches our configuration or mode,
@@ -1084,53 +1647,98 @@ def process_message(msg):
         except Exception:
             logger.exception("Failed to process the message: %s", msg)
             return None
+
         if tag == c["main"]["trigger"]["rpms"]:
+            ns = "rpms"
             logger.debug(
                 "Message tag configured as an RPM trigger, processing."
             )
+        elif tag == c["main"]["trigger"]["modules"]:
+            ns = "modules"
+            logger.debug(
+                "Message tag configured as a Module trigger, processing."
+            )
+            # get un-mangled name:stream for nvr
+            binfo = get_build_info(nvr)
             if (
-                comp in c["comps"]["rpms"]
-                or not c["main"]["control"]["strict"]
+                binfo is None
+                or binfo["name"] is None
+                or binfo["stream"] is None
             ):
-                logger.info(
-                    "Handling an RPM trigger for %s, tag %s.", comp, tag
+                logger.error(
+                    "Could not retrieve module build info for %s, skipping.",
+                    nvr,
                 )
-                if comp in c["main"]["control"]["exclude"]["rpms"]:
-                    logger.info(
-                        "The rpms/%s component is excluded from sync, skipping.",
-                        comp,
-                    )
-                    return None
-                ref = sync_repo(comp, ns="rpms", nvr=nvr)
-                if ref is not None:
-                    task = build_comp(comp, ref, ns="rpms")
+                return None
+            bcomp = "{}:{}".format(binfo["name"], binfo["stream"])
+            if comp != bcomp:
+                logger.debug(
+                    "Using unmangled component name: %s",
+                    bcomp,
+                )
+                comp = bcomp
+            # get SCM component name, stripped of any .git and ? suffixes
+            scm_comp = regex.sub(
+                r"(\.git)?\??$", "", split_scmurl(binfo["scmurl"])["comp"]
+            )
+            # skip generated *-devel modules
+            if binfo["name"] != scm_comp:
+                logger.info(
+                    "Module name %s does not match SCM component name %s, skipping.",
+                    binfo["name"],
+                    scm_comp,
+                )
+                return None
+        else:
+            logger.debug("Message tag not configured as a trigger, ignoring.")
+            return None
+
+        if comp in c["comps"][ns] or not c["main"]["control"]["strict"]:
+            logger.info("Handling trigger for %s/%s, tag %s.", ns, comp, tag)
+            if comp in c["main"]["control"]["exclude"][ns]:
+                logger.info(
+                    "The %s/%s component is excluded from sync, skipping.",
+                    ns,
+                    comp,
+                )
+                return None
+            scmurl = sync_repo(comp, ns=ns, nvr=nvr)
+            if scmurl is not None:
+                if c["main"]["control"]["build"]:
+                    scm = split_scmurl(scmurl)
+                    task = build_comp(comp, scm["ref"], ns=ns)
                     if task is not None:
                         logger.info(
-                            "Build submission of rpms/%s complete, task %s, trigger processed.",
+                            "Build submission of %s/%s complete, task %s, trigger processed.",
+                            ns,
                             comp,
                             task,
                         )
                     else:
                         logger.error(
-                            "Build submission of rpms/%s failed, aborting.trigger.",
+                            "Build submission of %s/%s failed, aborting trigger.",
+                            ns,
                             comp,
                         )
                 else:
-                    logger.error(
-                        "Synchronization of rpms/%s failed, aborting trigger.",
+                    logger.info(
+                        "Builds are disabled, no build attempted for %s/%s, trigger processed.",
+                        ns,
                         comp,
                     )
             else:
-                logger.debug(
-                    "RPM component %s not configured for sync and the strict mode is enabled, ignoring.",
+                logger.error(
+                    "Synchronization of %s/%s failed, aborting trigger.",
+                    ns,
                     comp,
                 )
-        elif tag == c["main"]["trigger"]["modules"]:
-            logger.error(
-                "The message matches our module configuration but module building not implemented, ignoring."
-            )
         else:
-            logger.debug("Message tag not configured as a trigger, ignoring.")
+            logger.debug(
+                "Component %s/%s not configured for sync and the strict "
+                "mode is enabled, ignoring.",
+                ns,
+                comp,
+            )
     else:
         logger.warning("Unable to handle %s topics, ignoring.", msg.topic)
     return None
@@ -1143,9 +1751,34 @@ def process_components(compset):
     :param compset: A set of components to process in the `ns/comp` form
     :returns: None
     """
+    if not isinstance(compset, set):
+        logger.critical("process_components() must be passed a set.")
+        return None
     if "main" not in c:
         logger.critical("DistroBaker is not configured, aborting.")
         return None
+
+    # Generate a dictionary (key module:stream, value nvr) of all of the latest
+    # modular builds for the source tag.
+    # Note: Querying tagged modules with latest=True only returns the latest
+    # module tagged by name without regard to stream. So, we need need to query
+    # everything to figure out the latest per stream ourselves. It helps that
+    # the list returned by Koji is ordered so the most recently tagged builds
+    # are at the end of the list. This also fetches and uses the actual
+    # un-mangled name and stream for each module.
+    latest = dict()
+    for x in get_buildsys("source").listTagged(
+        c["main"]["trigger"]["modules"],
+    ):
+        binfo = get_build_info(x["nvr"])
+        if binfo is None or binfo["name"] is None or binfo["stream"] is None:
+            logger.error(
+                "Could not get module info for %s, skipping.",
+                x["nvr"],
+            )
+        else:
+            latest["{}:{}".format(binfo["name"], binfo["stream"])] = x["nvr"]
+
     if not compset:
         logger.debug(
             "No components selected, gathering components from triggers."
@@ -1156,13 +1789,9 @@ def process_components(compset):
                 c["main"]["trigger"]["rpms"], latest=True
             )
         )
-        compset.update(
-            "{}/{}:{}".format("modules", x["package_name"], x["version"])
-            for x in get_buildsys("source").listTagged(
-                c["main"]["trigger"]["modules"], latest=True
-            )
-        )
+        compset.update("{}/{}".format("modules", x) for x in latest.keys())
     logger.info("Processing %d component(s).", len(compset))
+
     processed = 0
     for rec in sorted(compset, key=str.lower):
         m = cre.match(rec)
@@ -1171,12 +1800,6 @@ def process_components(compset):
             continue
         m = m.groupdict()
         logger.info("Processing %s.", rec)
-        if m["namespace"] == "modules":
-            logger.warning(
-                "The modules/%s component is a module; modules currently not implemented, skipping.",
-                m["component"],
-            )
-            continue
         if m["component"] in c["main"]["control"]["exclude"][m["namespace"]]:
             logger.info(
                 "The %s/%s component is excluded from sync, skipping.",
@@ -1194,9 +1817,14 @@ def process_components(compset):
                 m["component"],
             )
             continue
-        ref = sync_repo(comp=m["component"], ns=m["namespace"])
-        if ref is not None:
-            build_comp(comp=m["component"], ref=ref, ns=m["namespace"])
+        scmurl = sync_repo(
+            comp=m["component"],
+            ns=m["namespace"],
+            nvr=latest.get(m["component"]),
+        )
+        if scmurl is not None:
+            scm = split_scmurl(scmurl)
+            build_comp(comp=m["component"], ref=scm["ref"], ns=m["namespace"])
         logger.info("Done processing %s.", rec)
         processed += 1
     logger.info(
@@ -1207,11 +1835,13 @@ def process_components(compset):
     return None
 
 
-def get_scmurl(nvr):
-    """Get SCMURL for a source build system build NVR.  NVRs are unique.
+def get_build_info(nvr):
+    """Get SCMURL, plus extra attributes for modules, for a source build system
+    build NVR.  NVRs are unique.
 
     :param nvr: The build NVR to look up
-    :returns: The build SCMURL, or None on error
+    :returns: A dictionary with `scmurl`, `name`, `stream`, and `modulemd` keys,
+    or None on error
     """
     if "main" not in c:
         logger.critical("DistroBaker is not configured, aborting.")
@@ -1219,23 +1849,41 @@ def get_scmurl(nvr):
     bsys = get_buildsys("source")
     if bsys is None:
         logger.error(
-            "Build system unavailable, cannot retrieve the SCMURL of %s.", nvr
+            "Build system unavailable, cannot retrieve the build info of %s.",
+            nvr,
         )
         return None
     try:
         bsrc = bsys.getBuild(nvr)
     except Exception:
         logger.exception(
-            "An error occured while retrieving the SCMURL for %s.", nvr
+            "An error occured while retrieving the build info for %s.", nvr
         )
         return None
+
+    bi = dict()
     if "source" in bsrc:
-        bsrc = bsrc["source"]
-        logger.debug("Retrieved SCMURL for %s: %s", nvr, bsrc)
+        bi["scmurl"] = bsrc["source"]
+        logger.debug("Retrieved SCMURL for %s: %s", nvr, bi["scmurl"])
     else:
-        bsrc = None
-        logger.error("Cannot find any SCMURLs associated with %s.", nvr)
-    return bsrc
+        logger.error("Cannot find any SCMURL associated with %s.", nvr)
+        return None
+
+    try:
+        minfo = bsrc["extra"]["typeinfo"]["module"]
+        bi["name"] = minfo["name"]
+        bi["stream"] = minfo["stream"]
+        bi["modulemd"] = minfo["modulemd_str"]
+        logger.debug(
+            "Actual name:stream for %s is %s:%s", nvr, bi["name"], bi["stream"]
+        )
+    except Exception:
+        bi["name"] = None
+        bi["stream"] = None
+        bi["modulemd"] = None
+        logger.debug("No module info for %s.", nvr)
+
+    return bi
 
 
 def get_build(comp, ns="rpms"):
@@ -1258,6 +1906,7 @@ def get_build(comp, ns="rpms"):
             comp,
         )
         return None
+
     if ns == "rpms":
         try:
             nvr = bsys.listTagged(
@@ -1280,14 +1929,55 @@ def get_build(comp, ns="rpms"):
             return nvr[0]["nvr"]
         logger.error("Did not find any builds for %s/%s.", ns, comp)
         return None
+
     if ns == "modules":
-        logger.error(
-            "Modules not implemented, cannot get the latest build for %s/%s.",
+        ms = split_module(comp)
+        cname = ms["name"]
+        sname = ms["stream"]
+        try:
+            builds = bsys.listTagged(
+                c["main"]["trigger"][ns],
+            )
+        except Exception:
+            logger.exception(
+                "An error occured while getting the latest builds for %s/%s.",
+                ns,
+                cname,
+            )
+            return None
+        if not builds:
+            logger.error("Did not find any builds for %s/%s.", ns, cname)
+            return None
+        logger.debug(
+            "Found %d total builds for %s/%s",
+            len(builds),
             ns,
-            comp,
+            cname,
         )
-    else:
-        logger.error("Unrecognized namespace: %s/%s", ns, comp)
+        # find the latest build for name:stream
+        latest = None
+        for b in builds:
+            binfo = get_build_info(b["nvr"])
+            if (
+                binfo is None
+                or binfo["name"] is None
+                or binfo["stream"] is None
+            ):
+                logger.error(
+                    "Could not get module info for %s, skipping.",
+                    b["nvr"],
+                )
+            elif cname == binfo["name"] and sname == binfo["stream"]:
+                latest = b["nvr"]
+        if latest:
+            logger.debug(
+                "Located the latest build for %s/%s: %s", ns, comp, latest
+            )
+            return latest
+        logger.error("Did not find any builds for %s/%s.", ns, comp)
+        return None
+
+    logger.error("Unrecognized namespace: %s/%s", ns, comp)
     return None
 
 
