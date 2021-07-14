@@ -1674,9 +1674,21 @@ def process_message(msg):
             if comp != bcomp:
                 logger.debug(
                     "Using unmangled component name: %s",
-                    comp,
+                    bcomp,
                 )
                 comp = bcomp
+            # get SCM component name, stripped of any .git and ? suffixes
+            scm_comp = regex.sub(
+                r"(\.git)?\??$", "", split_scmurl(binfo["scmurl"])["comp"]
+            )
+            # skip generated *-devel modules
+            if binfo["name"] != scm_comp:
+                logger.info(
+                    "Module name %s does not match SCM component name %s, skipping.",
+                    binfo["name"],
+                    scm_comp,
+                )
+                return None
         else:
             logger.debug("Message tag not configured as a trigger, ignoring.")
             return None
